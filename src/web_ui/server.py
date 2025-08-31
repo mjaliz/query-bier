@@ -1,0 +1,176 @@
+#!/usr/bin/env python3
+"""
+Simple FastAPI server to serve the BEIR results comparison web UI
+"""
+
+import asyncio
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import List, Optional
+
+import uvicorn
+from fastapi import BackgroundTasks, FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse, StreamingResponse
+from pydantic import BaseModel
+
+app = FastAPI(title="BEIR Results Comparison API")
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Path to results directory
+RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
+WEB_UI_DIR = Path(__file__).parent
+
+
+@app.get("/")
+async def index():
+    """Serve the main HTML file"""
+    html_path = WEB_UI_DIR / "index.html"
+    return FileResponse(html_path)
+
+
+@app.get("/app.js")
+async def serve_js():
+    """Serve the JavaScript file"""
+    js_path = WEB_UI_DIR / "app.js"
+    return FileResponse(js_path, media_type="application/javascript")
+
+
+@app.get("/api/files", response_model=List[str])
+async def list_files():
+    """List all JSON files in the results directory"""
+    try:
+        files = [f.name for f in RESULTS_DIR.glob("*.json")]
+        return sorted(files)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/results/{filename}")
+async def get_result(filename: str):
+    """Get the content of a specific result file"""
+    try:
+        # Validate filename to prevent directory traversal
+        if "/" in filename or "\\" in filename or ".." in filename:
+            raise HTTPException(status_code=400, detail="Invalid filename")
+
+        file_path = RESULTS_DIR / filename
+
+        if not file_path.exists():
+            raise HTTPException(status_code=404, detail="File not found")
+
+        with open(file_path, "r") as f:
+            data = json.load(f)
+
+        return data
+    except json.JSONDecodeError as e:
+        raise HTTPException(status_code=400, detail=f"Invalid JSON: {str(e)}")
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/health")
+async def health():
+    """Health check endpoint"""
+    return {"status": "healthy"}
+
+
+class EvaluationRequest(BaseModel):
+    model_name: str
+    output_name: Optional[str] = None
+    batch_size: int = 32
+    use_filtered_corpus: bool = True
+
+
+async def run_evaluation_process(request: EvaluationRequest):
+    """Run the evaluation in a subprocess and stream the output"""
+    script_path = WEB_UI_DIR / "evaluate_model.py"
+
+    cmd = [
+        sys.executable,
+        "-u",  # Unbuffered output
+        str(script_path),
+        "--model-name",
+        request.model_name,
+        "--batch-size",
+        str(request.batch_size),
+    ]
+
+    if request.output_name:
+        cmd.extend(["--output-name", request.output_name])
+
+    if request.use_filtered_corpus:
+        cmd.append("--use-filtered-corpus")
+
+    try:
+        # Send initial connection message
+        yield f'data: {{"type": "log", "level": "info", "message": "Starting evaluation process..."}}\n\n'
+        yield f'data: {{"type": "log", "level": "info", "message": "Command: {" ".join(cmd)}"}}\n\n'
+
+        process = await asyncio.create_subprocess_exec(
+            *cmd,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,  # Merge stderr to stdout
+            bufsize=0,  # Unbuffered
+        )
+
+        # Read output line by line
+        while True:
+            line = await process.stdout.readline()
+            if not line:
+                break
+
+            decoded_line = line.decode("utf-8", errors="replace").strip()
+            if decoded_line:
+                # Check if it's already JSON format from our script
+                try:
+                    json.loads(decoded_line)
+                    yield f"data: {decoded_line}\n\n"
+                except json.JSONDecodeError:
+                    # Plain text log, wrap it
+                    yield f'data: {{"type": "log", "level": "info", "message": "{decoded_line.replace(chr(34), chr(39))}"}}\n\n'
+
+        # Wait for process to complete
+        return_code = await process.wait()
+
+        if return_code != 0:
+            yield f'data: {{"type": "error", "message": "Process failed with exit code {return_code}"}}\n\n'
+
+    except Exception as e:
+        yield f'data: {{"type": "error", "message": "Failed to start evaluation: {str(e)}"}}\n\n'
+
+
+@app.post("/api/evaluate")
+async def evaluate_model(request: EvaluationRequest):
+    """Run model evaluation and stream progress"""
+    return StreamingResponse(
+        run_evaluation_process(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+if __name__ == "__main__":
+    print(f"Starting FastAPI server...")
+    print(f"Results directory: {RESULTS_DIR}")
+    print(f"Available result files: {list(RESULTS_DIR.glob('*.json'))}")
+    print(f"\nOpen http://localhost:5000 in your browser to view the dashboard")
+    print(f"Press Ctrl+C to stop the server\n")
+
+    uvicorn.run(app, host="0.0.0.0", port=5003)
