@@ -132,6 +132,22 @@ def calculate_metrics_at_threshold(
     }
 
 
+def evaluate_thresholds_with_streaming(
+    model_name: str,
+    data_path: Path,
+    thresholds: List[float],
+    batch_size: int = 32,
+    use_filtered_corpus: bool = True,
+    progress_callback=None,
+    max_queries: int = None,
+) -> Dict:
+    """Streaming version with detailed progress logs"""
+    return evaluate_thresholds(
+        model_name, data_path, thresholds, batch_size,
+        use_filtered_corpus, progress_callback, max_queries
+    )
+
+
 def evaluate_thresholds(
     model_name: str,
     data_path: Path,
@@ -204,6 +220,21 @@ def evaluate_thresholds(
         if progress_callback:
             progress_callback({"type": "log", "level": "info", 
                              "message": f"Processing {max_queries} queries (out of {len(qrels)} total)"})
+    
+    # Log corpus mode details
+    if progress_callback:
+        if use_filtered_corpus:
+            progress_callback({
+                "type": "log", 
+                "level": "info",
+                "message": "Mode: Evaluating each query against its relevant docs + negative samples"
+            })
+        else:
+            progress_callback({
+                "type": "log", 
+                "level": "info",
+                "message": f"Mode: Evaluating each query against full corpus ({len(corpus)} documents)"
+            })
 
     for idx, (query_id, relevant_docs) in enumerate(qrels_items):
         if query_id not in queries:
@@ -215,6 +246,8 @@ def evaluate_thresholds(
         if use_filtered_corpus:
             # Only evaluate against documents in qrels for this query
             doc_ids = list(relevant_docs.keys())
+            num_relevant = len(doc_ids)
+            
             # Add some negative samples if available
             all_doc_ids = list(corpus.keys())
             num_negatives = min(len(doc_ids) * 2, 100)  # Add up to 2x negatives or 100
@@ -226,9 +259,25 @@ def evaluate_thresholds(
                 if doc_id not in relevant_docs
             ]
             doc_ids.extend(negative_samples)
+            
+            # Log details for first query as example
+            if idx == 0 and progress_callback:
+                progress_callback({
+                    "type": "log",
+                    "level": "debug",
+                    "message": f"Query {query_id}: Evaluating {num_relevant} relevant + {len(negative_samples)} negative docs"
+                })
         else:
             # Evaluate against entire corpus
             doc_ids = list(corpus.keys())
+            
+            # Log details for first query
+            if idx == 0 and progress_callback:
+                progress_callback({
+                    "type": "log",
+                    "level": "debug", 
+                    "message": f"Query {query_id}: Evaluating against all {len(doc_ids)} corpus documents"
+                })
 
         # Get document texts
         doc_texts = [corpus[doc_id] for doc_id in doc_ids if doc_id in corpus]
@@ -260,18 +309,28 @@ def evaluate_thresholds(
             doc_id: float(sim) for doc_id, sim in zip(doc_ids, sims)
         }
 
-        # Progress update
-        if progress_callback and idx % 10 == 0:
-            progress = int(
-                (idx + 1) / total_queries * 50
-            )  # First 50% for similarity calculation
-            progress_callback(
-                {
-                    "type": "progress",
-                    "progress": progress,
-                    "message": f"Computing similarities: {idx + 1}/{total_queries} queries",
-                }
-            )
+        # Progress update - more frequent updates
+        if progress_callback:
+            if idx % 5 == 0 or idx == total_queries - 1:  # Update every 5 queries or on last
+                progress = int(
+                    (idx + 1) / total_queries * 50
+                )  # First 50% for similarity calculation
+                progress_callback(
+                    {
+                        "type": "progress",
+                        "progress": progress,
+                        "message": f"Computing similarities: {idx + 1}/{total_queries} queries",
+                    }
+                )
+                
+                # Log memory usage periodically
+                if idx % 20 == 0 and idx > 0:
+                    num_pairs_evaluated = sum(len(sims) for sims in similarities.values())
+                    progress_callback({
+                        "type": "log",
+                        "level": "debug",
+                        "message": f"Evaluated {num_pairs_evaluated} query-document pairs so far"
+                    })
 
     # Check if we have any similarities to evaluate
     if not similarities:
@@ -279,6 +338,20 @@ def evaluate_thresholds(
         if progress_callback:
             progress_callback({"type": "error", "message": error_msg})
         raise Exception(error_msg)
+    
+    # Log summary of similarities computed
+    total_pairs = sum(len(sims) for sims in similarities.values())
+    if progress_callback:
+        progress_callback({
+            "type": "log",
+            "level": "info",
+            "message": f"Computed {total_pairs} query-document similarity scores"
+        })
+        progress_callback({
+            "type": "log",
+            "level": "info",
+            "message": f"Starting threshold evaluation for {len(thresholds)} thresholds: {thresholds}"
+        })
     
     # Evaluate at different thresholds
     results = []
@@ -297,6 +370,13 @@ def evaluate_thresholds(
                     "message": f"Evaluating threshold {threshold:.3f}",
                 }
             )
+            
+            # Log metrics for this threshold
+            progress_callback({
+                "type": "log",
+                "level": "debug",
+                "message": f"Threshold {threshold:.3f}: P={metrics['precision']:.3f}, R={metrics['recall']:.3f}, F1={metrics['f1']:.3f}"
+            })
 
     # Find best threshold by F1 score
     if not results:
@@ -306,6 +386,14 @@ def evaluate_thresholds(
         raise Exception(error_msg)
     
     best_result = max(results, key=lambda x: x["f1"])
+    
+    # Log final summary
+    if progress_callback:
+        progress_callback({
+            "type": "log",
+            "level": "info",
+            "message": f"✓ Evaluation complete! Best threshold: {best_result['threshold']:.3f} (F1={best_result['f1']:.3f})"
+        })
 
     return {
         "model_name": model_name,

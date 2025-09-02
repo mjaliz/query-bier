@@ -176,34 +176,34 @@ async def evaluate_model(request: EvaluationRequest):
 
 async def run_threshold_tuning_process(request: ThresholdTuningRequest):
     """Run threshold tuning evaluation and stream the output"""
-    
+
     # Default thresholds if not specified
     thresholds = request.thresholds or [i / 10 for i in range(1, 10)]
-    
+
     try:
         yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Starting threshold tuning for {request.model_name}'})}\n\n"
         
+        # Log the mode being used
+        mode_msg = "Filtered Corpus Mode (qrels + negative samples)" if request.use_filtered_corpus else "Full Corpus Mode (all documents)"
+        yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Using {mode_msg}'})}\n\n"
+        yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Max queries to process: {request.max_queries or 1000}'})}\n\n"
+
         # Use the data path
         data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
-        
+
         # Check if data exists
         if not data_path.exists():
             raise Exception(f"Data path not found: {data_path}")
-        
+
         # Import here to ensure proper module loading
         sys.path.insert(0, str(WEB_UI_DIR))
-        try:
-            from threshold_tuning import evaluate_thresholds
-        except ImportError as e:
-            raise Exception(f"Failed to import threshold_tuning module: {str(e)}")
+        from threshold_tuning import evaluate_thresholds
         
-        # Progress tracking
+        # Use original function with basic progress
         progress_messages = []
-        
         def progress_callback(data):
             progress_messages.append(data)
         
-        # Run evaluation in executor
         results = await asyncio.get_event_loop().run_in_executor(
             None,
             evaluate_thresholds,
@@ -213,17 +213,18 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
             request.batch_size,
             request.use_filtered_corpus,
             progress_callback,
-            request.max_queries or 100  # Default to 100 queries if not specified
+            request.max_queries or 1000,
         )
         
-        # Send any accumulated progress messages
+        # Send accumulated messages
         for msg in progress_messages:
             yield f"data: {json.dumps(msg)}\n\n"
-        
+
         yield f"data: {json.dumps({'type': 'complete', 'results': results})}\n\n"
-        
+
     except Exception as e:
         import traceback
+
         error_detail = traceback.format_exc()
         yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'detail': error_detail})}\n\n"
 
