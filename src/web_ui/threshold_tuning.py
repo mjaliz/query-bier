@@ -5,6 +5,7 @@ Calculates precision, recall, and F1 score for different similarity thresholds
 """
 
 import json
+import time
 from pathlib import Path
 from typing import Dict, List, Tuple
 
@@ -169,17 +170,50 @@ def evaluate_thresholds(
         progress_callback: Optional callback for progress updates
     """
 
+    # Check for GPU availability (CUDA or MPS)
+    import torch
+    
+    if torch.cuda.is_available():
+        device = 'cuda'
+        gpu_name = torch.cuda.get_device_name(0)
+        device_msg = f"🚀 CUDA available! Using GPU: {gpu_name}"
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+        device_msg = "🚀 MPS (Metal) available! Using Apple Silicon GPU"
+    else:
+        device = 'cpu'
+        device_msg = "⚠️ No GPU available, using CPU (this will be slower)"
+    
+    if progress_callback:
+        level = "info" if device != 'cpu' else "warning"
+        progress_callback(
+            {"type": "log", "level": level, "message": device_msg}
+        )
+    
     # Load model
     if progress_callback:
         progress_callback(
             {"type": "log", "level": "info", "message": f"Loading model: {model_name}"}
         )
     
-    try:
-        model = SentenceTransformer(model_name)
+    # SentenceTransformers doesn't support MPS yet, fall back to CPU for MPS
+    if device == 'mps':
+        model_device = 'cpu'
         if progress_callback:
             progress_callback(
-                {"type": "log", "level": "info", "message": "✓ Model loaded successfully"}
+                {"type": "log", "level": "info", 
+                 "message": "Note: SentenceTransformers doesn't support MPS yet, using CPU"}
+            )
+    else:
+        model_device = device
+    
+    try:
+        # Explicitly set device for the model
+        model = SentenceTransformer(model_name, device=model_device)
+        if progress_callback:
+            progress_callback(
+                {"type": "log", "level": "info", 
+                 "message": f"✓ Model loaded successfully on {model_device.upper()}"}
             )
     except Exception as e:
         error_msg = f"Failed to load model {model_name}: {str(e)}"
@@ -216,6 +250,7 @@ def evaluate_thresholds(
     # Calculate similarities for all query-document pairs
     similarities = {}
     total_queries = len(qrels)
+    start_time = time.time()
     
     if total_queries == 0:
         error_msg = "No qrels found in the dataset"
@@ -298,10 +333,18 @@ def evaluate_thresholds(
             continue
 
         # Compute embeddings
-        query_embedding = model.encode([query_text], convert_to_numpy=True)
+        query_embedding = model.encode(
+            [query_text], 
+            convert_to_numpy=True,
+            show_progress_bar=False
+        )
+        
+        # Use larger batch size for GPU if available
+        effective_batch_size = batch_size * 4 if model_device == 'cuda' else batch_size
+        
         doc_embeddings = model.encode(
             doc_texts,
-            batch_size=batch_size,
+            batch_size=effective_batch_size,
             convert_to_numpy=True,
             show_progress_bar=False,
         )
@@ -334,13 +377,15 @@ def evaluate_thresholds(
                     }
                 )
                 
-                # Log memory usage periodically
+                # Log speed and memory usage periodically
                 if idx % 20 == 0 and idx > 0:
                     num_pairs_evaluated = sum(len(sims) for sims in similarities.values())
+                    elapsed = time.time() - start_time
+                    speed = idx / elapsed
                     progress_callback({
                         "type": "log",
                         "level": "debug",
-                        "message": f"Evaluated {num_pairs_evaluated} query-document pairs so far"
+                        "message": f"Speed: {speed:.1f} queries/sec | Total pairs: {num_pairs_evaluated}"
                     })
 
     # Check if we have any similarities to evaluate
