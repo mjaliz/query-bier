@@ -94,6 +94,13 @@ class EvaluationRequest(BaseModel):
     use_filtered_corpus: bool = True
 
 
+class ThresholdTuningRequest(BaseModel):
+    model_name: str
+    thresholds: Optional[List[float]] = None
+    batch_size: int = 32
+    use_filtered_corpus: bool = True
+
+
 async def run_evaluation_process(request: EvaluationRequest):
     """Run the evaluation in a subprocess and stream the output"""
     script_path = WEB_UI_DIR / "evaluate_model.py"
@@ -157,6 +164,73 @@ async def evaluate_model(request: EvaluationRequest):
     """Run model evaluation and stream progress"""
     return StreamingResponse(
         run_evaluation_process(request),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "Access-Control-Allow-Origin": "*",
+        },
+    )
+
+
+async def run_threshold_tuning_process(request: ThresholdTuningRequest):
+    """Run threshold tuning evaluation and stream the output"""
+    script_path = WEB_UI_DIR / "threshold_tuning.py"
+    
+    # Default thresholds if not specified
+    thresholds = request.thresholds or [i/10 for i in range(1, 10)]
+    
+    # Prepare progress callback
+    async def send_progress(data):
+        return f'data: {json.dumps(data)}\n\n'
+    
+    try:
+        yield await send_progress({
+            'type': 'log', 
+            'level': 'info', 
+            'message': f'Starting threshold tuning for {request.model_name}'
+        })
+        
+        # Import the threshold tuning module and run evaluation
+        sys.path.insert(0, str(WEB_UI_DIR))
+        from threshold_tuning import evaluate_thresholds
+        
+        # Run evaluation with progress callback
+        def progress_callback(data):
+            # This will be called from the evaluation function
+            asyncio.create_task(send_progress(data))
+        
+        # Use SciFact dataset by default (you can make this configurable)
+        data_path = Path(__file__).parent.parent.parent / "scifact"
+        
+        results = await asyncio.get_event_loop().run_in_executor(
+            None,
+            evaluate_thresholds,
+            request.model_name,
+            data_path,
+            thresholds,
+            request.batch_size,
+            request.use_filtered_corpus,
+            None  # We'll handle progress differently
+        )
+        
+        yield await send_progress({
+            'type': 'complete',
+            'results': results
+        })
+        
+    except Exception as e:
+        yield await send_progress({
+            'type': 'error',
+            'message': str(e)
+        })
+
+
+@app.post("/api/threshold-tuning")
+async def threshold_tuning(request: ThresholdTuningRequest):
+    """Run threshold tuning evaluation and stream progress"""
+    return StreamingResponse(
+        run_threshold_tuning_process(request),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",

@@ -191,6 +191,12 @@
                                 <i class="bi bi-play-circle"></i> Evaluate Model
                             </button>
                         </li>
+                        <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="threshold-tab" data-bs-toggle="tab" data-bs-target="#threshold"
+                                type="button">
+                                <i class="bi bi-sliders"></i> Threshold Tuning
+                            </button>
+                        </li>
                     </ul>
 
                     <div class="tab-content" id="chartTabContent">
@@ -302,6 +308,127 @@
                                                         role="progressbar" id="progressBar" style="width: 0%">0%</div>
                                                 </div>
                                                 <small class="text-muted" id="progressText">Initializing...</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="threshold" role="tabpanel">
+                            <div class="row">
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title"><i class="bi bi-sliders"></i> Threshold Tuning Configuration</h5>
+                                            <form id="thresholdForm">
+                                                <div class="mb-3">
+                                                    <label for="thresholdModelName" class="form-label">Embedding Model Name</label>
+                                                    <input type="text" class="form-control" id="thresholdModelName"
+                                                        placeholder="e.g., sentence-transformers/all-MiniLM-L6-v2"
+                                                        required>
+                                                    <small class="form-text text-muted">
+                                                        Enter a HuggingFace model name for embedding generation
+                                                    </small>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="thresholdValues" class="form-label">Thresholds to Test</label>
+                                                    <input type="text" class="form-control" id="thresholdValues"
+                                                        placeholder="e.g., 0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9"
+                                                        value="0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9">
+                                                    <small class="form-text text-muted">
+                                                        Comma-separated threshold values between 0 and 1
+                                                    </small>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="thresholdBatchSize" class="form-label">Batch Size</label>
+                                                    <input type="number" class="form-control" id="thresholdBatchSize" value="32"
+                                                        min="1" max="256">
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="thresholdCorpusMode" class="form-label">Corpus Mode</label>
+                                                    <select class="form-select" id="thresholdCorpusMode">
+                                                        <option value="filtered" selected>Filtered Corpus (Qrels + Negatives)</option>
+                                                        <option value="full">Full Corpus</option>
+                                                    </select>
+                                                    <small class="form-text text-muted">
+                                                        Filtered: Uses qrels documents plus negative samples<br>
+                                                        Full: Evaluates against entire corpus (slower)
+                                                    </small>
+                                                </div>
+                                                <button type="submit" class="btn btn-primary w-100" id="thresholdBtn">
+                                                    <i class="bi bi-graph-up"></i> Start Threshold Tuning
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-6">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title"><i class="bi bi-graph-up"></i> Results</h5>
+                                            <div id="thresholdResults" style="display: none;">
+                                                <div class="alert alert-success mb-3">
+                                                    <h6>Best Threshold Found:</h6>
+                                                    <div class="row">
+                                                        <div class="col-6">
+                                                            <strong>Threshold:</strong> <span id="bestThreshold">-</span>
+                                                        </div>
+                                                        <div class="col-6">
+                                                            <strong>F1 Score:</strong> <span id="bestF1">-</span>
+                                                        </div>
+                                                    </div>
+                                                    <div class="row mt-2">
+                                                        <div class="col-6">
+                                                            <strong>Precision:</strong> <span id="bestPrecision">-</span>
+                                                        </div>
+                                                        <div class="col-6">
+                                                            <strong>Recall:</strong> <span id="bestRecall">-</span>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                <div class="chart-container" style="height: 300px;">
+                                                    <canvas id="thresholdChart"></canvas>
+                                                </div>
+                                            </div>
+                                            <div id="thresholdOutput"
+                                                style="height: 200px; overflow-y: auto; background: #f8f9fa; border-radius: 5px; padding: 10px; font-family: monospace; font-size: 0.9rem;">
+                                                <div class="text-muted">Evaluation output will appear here...</div>
+                                            </div>
+                                            <div id="thresholdProgress" class="mt-3" style="display: none;">
+                                                <div class="progress">
+                                                    <div class="progress-bar progress-bar-striped progress-bar-animated"
+                                                        role="progressbar" id="thresholdProgressBar" style="width: 0%">0%</div>
+                                                </div>
+                                                <small class="text-muted" id="thresholdProgressText">Initializing...</small>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            <div class="row mt-3">
+                                <div class="col-12">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title"><i class="bi bi-table"></i> Detailed Results Table</h5>
+                                            <div class="table-responsive">
+                                                <table class="table table-hover" id="thresholdTable" style="display: none;">
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Threshold</th>
+                                                            <th>Precision</th>
+                                                            <th>Recall</th>
+                                                            <th>F1 Score</th>
+                                                            <th>Accuracy</th>
+                                                            <th>True Positives</th>
+                                                            <th>False Positives</th>
+                                                            <th>False Negatives</th>
+                                                            <th>True Negatives</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody id="thresholdTableBody">
+                                                        <!-- Results will be populated here -->
+                                                    </tbody>
+                                                </table>
                                             </div>
                                         </div>
                                     </div>

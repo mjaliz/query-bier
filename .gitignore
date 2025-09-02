@@ -11,3 +11,4 @@ wheels/
 .ropeproject
 *.json
 data
+.DS_Store

@@ -17,6 +17,7 @@ const colors = [
 document.addEventListener('DOMContentLoaded', function() {
     loadFileList();
     setupEvaluationForm();
+    setupThresholdForm();
 });
 
 // Load list of available result files
@@ -694,4 +695,237 @@ function showNotification(message, type) {
     setTimeout(() => {
         notification.remove();
     }, 5000);
+}
+
+// Setup threshold tuning form
+function setupThresholdForm() {
+    const form = document.getElementById('thresholdForm');
+    if (!form) return;
+    
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await runThresholdTuning();
+    });
+}
+
+// Run threshold tuning
+async function runThresholdTuning() {
+    const modelName = document.getElementById('thresholdModelName').value;
+    const thresholdValues = document.getElementById('thresholdValues').value;
+    const batchSize = document.getElementById('thresholdBatchSize').value;
+    const corpusMode = document.getElementById('thresholdCorpusMode').value;
+    const useFilteredCorpus = corpusMode === 'filtered';
+    
+    if (!modelName) {
+        alert('Please enter a model name');
+        return;
+    }
+    
+    // Parse thresholds
+    const thresholds = thresholdValues.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v) && v >= 0 && v <= 1);
+    if (thresholds.length === 0) {
+        alert('Please enter valid threshold values between 0 and 1');
+        return;
+    }
+    
+    // Disable form during evaluation
+    const thresholdBtn = document.getElementById('thresholdBtn');
+    const originalBtnText = thresholdBtn.innerHTML;
+    thresholdBtn.disabled = true;
+    thresholdBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Running...';
+    
+    // Show progress
+    const progressDiv = document.getElementById('thresholdProgress');
+    const progressBar = document.getElementById('thresholdProgressBar');
+    const progressText = document.getElementById('thresholdProgressText');
+    const outputDiv = document.getElementById('thresholdOutput');
+    const resultsDiv = document.getElementById('thresholdResults');
+    const tableDiv = document.getElementById('thresholdTable');
+    
+    progressDiv.style.display = 'block';
+    resultsDiv.style.display = 'none';
+    tableDiv.style.display = 'none';
+    outputDiv.innerHTML = `<div class="text-info">Starting threshold tuning for ${modelName}...</div>`;
+    
+    try {
+        const response = await fetch('/api/threshold-tuning', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model_name: modelName,
+                thresholds: thresholds,
+                batch_size: parseInt(batchSize),
+                use_filtered_corpus: useFilteredCorpus
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Threshold tuning failed: ${response.statusText}`);
+        }
+        
+        // Stream the response
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split('\n');
+            buffer = lines.pop(); // Keep incomplete line in buffer
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        
+                        if (data.type === 'progress') {
+                            progressBar.style.width = `${data.progress}%`;
+                            progressBar.textContent = `${data.progress}%`;
+                            progressText.textContent = data.message || 'Processing...';
+                        } else if (data.type === 'log') {
+                            outputDiv.innerHTML += `<div class="${data.level === 'error' ? 'text-danger' : 'text-secondary'}">${escapeHtml(data.message)}</div>`;
+                            outputDiv.scrollTop = outputDiv.scrollHeight;
+                        } else if (data.type === 'complete') {
+                            displayThresholdResults(data.results);
+                            outputDiv.innerHTML += '<div class="text-success fw-bold">✓ Threshold tuning completed successfully!</div>';
+                            showNotification('Threshold tuning completed successfully!', 'success');
+                        } else if (data.type === 'error') {
+                            outputDiv.innerHTML += `<div class="text-danger fw-bold">✗ Error: ${escapeHtml(data.message)}</div>`;
+                            showNotification('Threshold tuning failed!', 'error');
+                        }
+                    } catch (e) {
+                        console.error('Failed to parse SSE data:', e);
+                    }
+                }
+            }
+        }
+    } catch (error) {
+        outputDiv.innerHTML += `<div class="text-danger fw-bold">✗ Error: ${escapeHtml(error.message)}</div>`;
+        showNotification('Threshold tuning failed!', 'error');
+    } finally {
+        // Re-enable form
+        thresholdBtn.disabled = false;
+        thresholdBtn.innerHTML = originalBtnText;
+        progressDiv.style.display = 'none';
+    }
+}
+
+// Display threshold tuning results
+function displayThresholdResults(results) {
+    if (!results) return;
+    
+    // Show results section
+    document.getElementById('thresholdResults').style.display = 'block';
+    document.getElementById('thresholdTable').style.display = 'table';
+    
+    // Update best threshold display
+    document.getElementById('bestThreshold').textContent = results.best_threshold.toFixed(3);
+    document.getElementById('bestF1').textContent = (results.best_f1 * 100).toFixed(2) + '%';
+    document.getElementById('bestPrecision').textContent = (results.best_precision * 100).toFixed(2) + '%';
+    document.getElementById('bestRecall').textContent = (results.best_recall * 100).toFixed(2) + '%';
+    
+    // Create threshold chart
+    const ctx = document.getElementById('thresholdChart').getContext('2d');
+    
+    // Destroy existing chart if any
+    if (charts.threshold) {
+        charts.threshold.destroy();
+    }
+    
+    const thresholds = results.results.map(r => r.threshold);
+    const precisions = results.results.map(r => r.precision);
+    const recalls = results.results.map(r => r.recall);
+    const f1Scores = results.results.map(r => r.f1);
+    
+    charts.threshold = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: thresholds,
+            datasets: [
+                {
+                    label: 'Precision',
+                    data: precisions,
+                    borderColor: 'rgba(255, 99, 132, 1)',
+                    backgroundColor: 'rgba(255, 99, 132, 0.2)',
+                    borderWidth: 2
+                },
+                {
+                    label: 'Recall',
+                    data: recalls,
+                    borderColor: 'rgba(54, 162, 235, 1)',
+                    backgroundColor: 'rgba(54, 162, 235, 0.2)',
+                    borderWidth: 2
+                },
+                {
+                    label: 'F1 Score',
+                    data: f1Scores,
+                    borderColor: 'rgba(75, 192, 192, 1)',
+                    backgroundColor: 'rgba(75, 192, 192, 0.2)',
+                    borderWidth: 2
+                }
+            ]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                title: {
+                    display: true,
+                    text: 'Metrics vs Threshold',
+                    font: { size: 14 }
+                },
+                legend: {
+                    display: true,
+                    position: 'top'
+                }
+            },
+            scales: {
+                x: {
+                    title: {
+                        display: true,
+                        text: 'Threshold'
+                    }
+                },
+                y: {
+                    title: {
+                        display: true,
+                        text: 'Score'
+                    },
+                    min: 0,
+                    max: 1
+                }
+            }
+        }
+    });
+    
+    // Populate results table
+    const tbody = document.getElementById('thresholdTableBody');
+    tbody.innerHTML = '';
+    
+    results.results.forEach(result => {
+        const row = document.createElement('tr');
+        // Highlight best threshold row
+        if (result.threshold === results.best_threshold) {
+            row.style.backgroundColor = 'rgba(40, 167, 69, 0.1)';
+            row.style.fontWeight = 'bold';
+        }
+        
+        row.innerHTML = `
+            <td>${result.threshold.toFixed(3)}</td>
+            <td>${(result.precision * 100).toFixed(2)}%</td>
+            <td>${(result.recall * 100).toFixed(2)}%</td>
+            <td>${(result.f1 * 100).toFixed(2)}%</td>
+            <td>${(result.accuracy * 100).toFixed(2)}%</td>
+            <td>${result.true_positives}</td>
+            <td>${result.false_positives}</td>
+            <td>${result.false_negatives}</td>
+            <td>${result.true_negatives}</td>
+        `;
+        tbody.appendChild(row);
+    });
 }
