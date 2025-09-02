@@ -114,9 +114,10 @@ def calculate_metrics_at_threshold(
         if (precision + recall) > 0
         else 0
     )
-    accuracy = (true_positives + true_negatives) / (
-        true_positives + false_positives + false_negatives + true_negatives
-    )
+    
+    # Calculate accuracy with safety check for division by zero
+    total = true_positives + false_positives + false_negatives + true_negatives
+    accuracy = (true_positives + true_negatives) / total if total > 0 else 0
 
     return {
         "threshold": threshold,
@@ -163,11 +164,36 @@ def evaluate_thresholds(
         progress_callback(
             {"type": "log", "level": "info", "message": "Loading BEIR data..."}
         )
-    corpus, queries, qrels = load_beir_data(data_path)
+    
+    try:
+        corpus, queries, qrels = load_beir_data(data_path)
+        if progress_callback:
+            progress_callback(
+                {"type": "log", "level": "info", 
+                 "message": f"Loaded {len(corpus)} documents, {len(queries)} queries, {len(qrels)} qrels"}
+            )
+    except Exception as e:
+        error_msg = f"Failed to load BEIR data from {data_path}: {str(e)}"
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
 
+    # Validate data
+    if not corpus or not queries or not qrels:
+        error_msg = "No data found in BEIR dataset. Please check the data path and file formats."
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
+    
     # Calculate similarities for all query-document pairs
     similarities = {}
     total_queries = len(qrels)
+    
+    if total_queries == 0:
+        error_msg = "No qrels found in the dataset"
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
 
     for idx, (query_id, relevant_docs) in enumerate(qrels.items()):
         if query_id not in queries:
@@ -237,6 +263,13 @@ def evaluate_thresholds(
                 }
             )
 
+    # Check if we have any similarities to evaluate
+    if not similarities:
+        error_msg = "No similarities computed. Please check if queries and documents are matching."
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
+    
     # Evaluate at different thresholds
     results = []
     for i, threshold in enumerate(thresholds):
@@ -256,6 +289,12 @@ def evaluate_thresholds(
             )
 
     # Find best threshold by F1 score
+    if not results:
+        error_msg = "No results generated from threshold evaluation"
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
+    
     best_result = max(results, key=lambda x: x["f1"])
 
     return {
