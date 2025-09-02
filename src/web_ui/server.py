@@ -203,7 +203,7 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
             asyncio.create_task(send_progress(data))
 
         # Use SciFact dataset by default (you can make this configurable)
-        data_path = Path(__file__).parent.parent.parent / "data"
+        data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
 
         results = await asyncio.get_event_loop().run_in_executor(
             None,
