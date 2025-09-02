@@ -174,7 +174,18 @@ def evaluate_thresholds(
         progress_callback(
             {"type": "log", "level": "info", "message": f"Loading model: {model_name}"}
         )
-    model = SentenceTransformer(model_name)
+    
+    try:
+        model = SentenceTransformer(model_name)
+        if progress_callback:
+            progress_callback(
+                {"type": "log", "level": "info", "message": "✓ Model loaded successfully"}
+            )
+    except Exception as e:
+        error_msg = f"Failed to load model {model_name}: {str(e)}"
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
 
     # Load data
     if progress_callback:

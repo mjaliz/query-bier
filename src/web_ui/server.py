@@ -99,7 +99,7 @@ class ThresholdTuningRequest(BaseModel):
     thresholds: Optional[List[float]] = None
     batch_size: int = 32
     use_filtered_corpus: bool = True
-    max_queries: Optional[int] = 100  # Limit for faster testing
+    max_queries: Optional[int] = 100  # Default to 100 queries for faster testing
 
 
 async def run_evaluation_process(request: EvaluationRequest):
@@ -176,6 +176,8 @@ async def evaluate_model(request: EvaluationRequest):
 
 async def run_threshold_tuning_process(request: ThresholdTuningRequest):
     """Run threshold tuning evaluation and stream the output"""
+    import queue
+    import threading
 
     # Default thresholds if not specified
     thresholds = request.thresholds or [i / 10 for i in range(1, 10)]
@@ -186,7 +188,7 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
         # Log the mode being used
         mode_msg = "Filtered Corpus Mode (qrels + negative samples)" if request.use_filtered_corpus else "Full Corpus Mode (all documents)"
         yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Using {mode_msg}'})}\n\n"
-        yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Max queries to process: {request.max_queries or 1000}'})}\n\n"
+        yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Max queries to process: {request.max_queries or 100}'})}\n\n"
 
         # Use the data path
         data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
@@ -199,28 +201,55 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
         sys.path.insert(0, str(WEB_UI_DIR))
         from threshold_tuning import evaluate_thresholds
         
-        # Use original function with basic progress
-        progress_messages = []
+        # Create a queue for real-time progress updates
+        progress_queue = queue.Queue()
+        result_container = {'result': None, 'error': None}
+        
         def progress_callback(data):
-            progress_messages.append(data)
+            progress_queue.put(data)
         
-        results = await asyncio.get_event_loop().run_in_executor(
-            None,
-            evaluate_thresholds,
-            request.model_name,
-            data_path,
-            thresholds,
-            request.batch_size,
-            request.use_filtered_corpus,
-            progress_callback,
-            request.max_queries or 1000,
-        )
+        def run_evaluation():
+            try:
+                result = evaluate_thresholds(
+                    request.model_name,
+                    data_path,
+                    thresholds,
+                    request.batch_size,
+                    request.use_filtered_corpus,
+                    progress_callback,
+                    request.max_queries or 100,
+                )
+                result_container['result'] = result
+            except Exception as e:
+                result_container['error'] = e
+                progress_queue.put({'type': 'error', 'message': str(e)})
         
-        # Send accumulated messages
-        for msg in progress_messages:
+        # Start evaluation in a thread
+        eval_thread = threading.Thread(target=run_evaluation)
+        eval_thread.start()
+        
+        # Stream progress messages while evaluation runs
+        while eval_thread.is_alive():
+            try:
+                # Get messages from queue with timeout
+                while True:
+                    msg = progress_queue.get(timeout=0.1)
+                    yield f"data: {json.dumps(msg)}\n\n"
+            except queue.Empty:
+                # No messages, wait a bit and check if thread is still running
+                await asyncio.sleep(0.1)
+        
+        # Thread finished, get any remaining messages
+        while not progress_queue.empty():
+            msg = progress_queue.get()
             yield f"data: {json.dumps(msg)}\n\n"
-
-        yield f"data: {json.dumps({'type': 'complete', 'results': results})}\n\n"
+        
+        # Check for error or send results
+        if result_container['error']:
+            raise result_container['error']
+        
+        if result_container['result']:
+            yield f"data: {json.dumps({'type': 'complete', 'results': result_container['result']})}\n\n"
 
     except Exception as e:
         import traceback
