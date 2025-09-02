@@ -5,14 +5,11 @@ Calculates precision, recall, and F1 score for different similarity thresholds
 """
 
 import json
-import sys
 from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
-import torch
 from sentence_transformers import SentenceTransformer
-from tqdm import tqdm
 
 
 def load_beir_data(data_path: Path) -> Tuple[Dict, Dict, Dict]:
@@ -41,14 +38,17 @@ def load_beir_data(data_path: Path) -> Tuple[Dict, Dict, Dict]:
         next(f)  # Skip header
         for line in f:
             parts = line.strip().split("\t")
-            if len(parts) >= 4:
-                query_id, _, doc_id, relevance = parts[:4]
-                relevance = int(relevance)
-                if relevance > 0:  # Only consider relevant documents
-                    if query_id not in qrels:
-                        qrels[query_id] = {}
-                    qrels[query_id][doc_id] = relevance
-
+            if len(parts) >= 3:
+                query_id, doc_id, relevance = parts[:3]
+                try:
+                    relevance = int(relevance)
+                    if relevance > 0:  # Only consider relevant documents
+                        if query_id not in qrels:
+                            qrels[query_id] = {}
+                        qrels[query_id][doc_id] = relevance
+                except ValueError:
+                    continue  # Skip lines with invalid relevance scores
+    
     return corpus, queries, qrels
 
 
@@ -139,6 +139,7 @@ def evaluate_thresholds(
     batch_size: int = 32,
     use_filtered_corpus: bool = True,
     progress_callback=None,
+    max_queries: int = None,
 ) -> Dict:
     """
     Evaluate model at different similarity thresholds
@@ -194,8 +195,17 @@ def evaluate_thresholds(
         if progress_callback:
             progress_callback({"type": "error", "message": error_msg})
         raise Exception(error_msg)
+    
+    # Limit queries if specified
+    qrels_items = list(qrels.items())
+    if max_queries and max_queries < len(qrels_items):
+        qrels_items = qrels_items[:max_queries]
+        total_queries = max_queries
+        if progress_callback:
+            progress_callback({"type": "log", "level": "info", 
+                             "message": f"Processing {max_queries} queries (out of {len(qrels)} total)"})
 
-    for idx, (query_id, relevant_docs) in enumerate(qrels.items()):
+    for idx, (query_id, relevant_docs) in enumerate(qrels_items):
         if query_id not in queries:
             continue
 

@@ -99,6 +99,7 @@ class ThresholdTuningRequest(BaseModel):
     thresholds: Optional[List[float]] = None
     batch_size: int = 32
     use_filtered_corpus: bool = True
+    max_queries: Optional[int] = 100  # Limit for faster testing
 
 
 async def run_evaluation_process(request: EvaluationRequest):
@@ -175,36 +176,34 @@ async def evaluate_model(request: EvaluationRequest):
 
 async def run_threshold_tuning_process(request: ThresholdTuningRequest):
     """Run threshold tuning evaluation and stream the output"""
-    script_path = WEB_UI_DIR / "threshold_tuning.py"
-
+    
     # Default thresholds if not specified
     thresholds = request.thresholds or [i / 10 for i in range(1, 10)]
-
-    # Prepare progress callback
-    async def send_progress(data):
-        return f"data: {json.dumps(data)}\n\n"
-
+    
     try:
-        yield await send_progress(
-            {
-                "type": "log",
-                "level": "info",
-                "message": f"Starting threshold tuning for {request.model_name}",
-            }
-        )
-
-        # Import the threshold tuning module and run evaluation
-        sys.path.insert(0, str(WEB_UI_DIR))
-        from threshold_tuning import evaluate_thresholds
-
-        # Run evaluation with progress callback
-        def progress_callback(data):
-            # This will be called from the evaluation function
-            asyncio.create_task(send_progress(data))
-
-        # Use SciFact dataset by default (you can make this configurable)
+        yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Starting threshold tuning for {request.model_name}'})}\n\n"
+        
+        # Use the data path
         data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
-
+        
+        # Check if data exists
+        if not data_path.exists():
+            raise Exception(f"Data path not found: {data_path}")
+        
+        # Import here to ensure proper module loading
+        sys.path.insert(0, str(WEB_UI_DIR))
+        try:
+            from threshold_tuning import evaluate_thresholds
+        except ImportError as e:
+            raise Exception(f"Failed to import threshold_tuning module: {str(e)}")
+        
+        # Progress tracking
+        progress_messages = []
+        
+        def progress_callback(data):
+            progress_messages.append(data)
+        
+        # Run evaluation in executor
         results = await asyncio.get_event_loop().run_in_executor(
             None,
             evaluate_thresholds,
@@ -213,13 +212,20 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
             thresholds,
             request.batch_size,
             request.use_filtered_corpus,
-            None,  # We'll handle progress differently
+            progress_callback,
+            request.max_queries or 100  # Default to 100 queries if not specified
         )
-
-        yield await send_progress({"type": "complete", "results": results})
-
+        
+        # Send any accumulated progress messages
+        for msg in progress_messages:
+            yield f"data: {json.dumps(msg)}\n\n"
+        
+        yield f"data: {json.dumps({'type': 'complete', 'results': results})}\n\n"
+        
     except Exception as e:
-        yield await send_progress({"type": "error", "message": str(e)})
+        import traceback
+        error_detail = traceback.format_exc()
+        yield f"data: {json.dumps({'type': 'error', 'message': str(e), 'detail': error_detail})}\n\n"
 
 
 @app.post("/api/threshold-tuning")
