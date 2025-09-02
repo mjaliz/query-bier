@@ -351,6 +351,16 @@
                                                         min="1" max="256">
                                                 </div>
                                                 <div class="mb-3">
+                                                    <label for="thresholdMaxQueries" class="form-label">Max Queries</label>
+                                                    <input type="number" class="form-control" id="thresholdMaxQueries" 
+                                                        placeholder="Leave empty to process all queries"
+                                                        min="1">
+                                                    <small class="form-text text-muted">
+                                                        Limit the number of queries to process for faster testing.<br>
+                                                        Leave empty to process all available queries in the dataset.
+                                                    </small>
+                                                </div>
+                                                <div class="mb-3">
                                                     <label for="thresholdCorpusMode" class="form-label">Corpus Mode</label>
                                                     <select class="form-select" id="thresholdCorpusMode">
                                                         <option value="filtered" selected>Filtered Corpus (Qrels + Negatives)</option>

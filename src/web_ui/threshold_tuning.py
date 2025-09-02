@@ -7,7 +7,7 @@ Calculates precision, recall, and F1 score for different similarity thresholds
 import json
 import time
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -156,7 +156,7 @@ def evaluate_thresholds(
     batch_size: int = 32,
     use_filtered_corpus: bool = True,
     progress_callback=None,
-    max_queries: int = None,
+    max_queries: Optional[int] = None,
 ) -> Dict:
     """
     Evaluate model at different similarity thresholds
@@ -266,6 +266,10 @@ def evaluate_thresholds(
         if progress_callback:
             progress_callback({"type": "log", "level": "info", 
                              "message": f"Processing {max_queries} queries (out of {len(qrels)} total)"})
+    else:
+        if progress_callback:
+            progress_callback({"type": "log", "level": "info", 
+                             "message": f"Processing ALL {len(qrels)} queries in the dataset"})
     
     # Log corpus mode details and estimate computations
     if progress_callback:
@@ -533,6 +537,11 @@ def main():
         action="store_true",
         help="Only evaluate on documents in qrels",
     )
+    parser.add_argument(
+        "--max-queries", 
+        type=int, 
+        help="Maximum number of queries to process (default: all queries)"
+    )
     parser.add_argument("--output", help="Output file path")
 
     args = parser.parse_args()
@@ -548,6 +557,7 @@ def main():
         thresholds=args.thresholds,
         batch_size=args.batch_size,
         use_filtered_corpus=args.use_filtered_corpus,
+        max_queries=args.max_queries,
     )
 
     # Save or print results

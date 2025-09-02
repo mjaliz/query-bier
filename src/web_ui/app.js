@@ -719,6 +719,7 @@ async function runThresholdTuning() {
     const thresholdValues = document.getElementById('thresholdValues').value;
     const batchSize = document.getElementById('thresholdBatchSize').value;
     const corpusMode = document.getElementById('thresholdCorpusMode').value;
+    const maxQueriesValue = document.getElementById('thresholdMaxQueries').value;
     const useFilteredCorpus = corpusMode === 'filtered';
     
     if (!modelName) {
@@ -730,6 +731,13 @@ async function runThresholdTuning() {
     const thresholds = thresholdValues.split(',').map(v => parseFloat(v.trim())).filter(v => !isNaN(v) && v >= 0 && v <= 1);
     if (thresholds.length === 0) {
         alert('Please enter valid threshold values between 0 and 1');
+        return;
+    }
+    
+    // Parse max_queries (null if empty)
+    const maxQueries = maxQueriesValue ? parseInt(maxQueriesValue) : null;
+    if (maxQueriesValue && (isNaN(maxQueries) || maxQueries < 1)) {
+        alert('Max queries must be a positive integer or leave empty for all queries');
         return;
     }
     
@@ -750,7 +758,8 @@ async function runThresholdTuning() {
     progressDiv.style.display = 'block';
     resultsDiv.style.display = 'none';
     tableDiv.style.display = 'none';
-    outputDiv.innerHTML = `<div class="text-info">Starting background job for ${modelName}...</div>`;
+    const queriesText = maxQueries ? `${maxQueries} queries` : 'all queries';
+    outputDiv.innerHTML = `<div class="text-info">Starting background job for ${modelName} (${queriesText})...</div>`;
     
     try {
         // Start background job
@@ -764,7 +773,7 @@ async function runThresholdTuning() {
                 thresholds: thresholds,
                 batch_size: parseInt(batchSize),
                 use_filtered_corpus: useFilteredCorpus,
-                max_queries: 100
+                max_queries: maxQueries
             })
         });
         

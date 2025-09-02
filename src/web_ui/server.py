@@ -106,7 +106,7 @@ class ThresholdTuningRequest(BaseModel):
     thresholds: Optional[List[float]] = None
     batch_size: int = 32
     use_filtered_corpus: bool = True
-    max_queries: Optional[int] = 100  # Default to 100 queries for faster testing
+    max_queries: Optional[int] = None  # None means process all queries
 
 
 async def run_evaluation_process(request: EvaluationRequest):
@@ -217,7 +217,7 @@ def run_threshold_tuning_background(job_id: str, request: ThresholdTuningRequest
             request.batch_size,
             request.use_filtered_corpus,
             progress_callback,
-            request.max_queries or 100,
+            request.max_queries,  # Pass None if not specified to process all queries
         )
         
         # Save results
