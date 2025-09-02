@@ -18,29 +18,29 @@ from tqdm import tqdm
 def load_beir_data(data_path: Path) -> Tuple[Dict, Dict, Dict]:
     """Load BEIR dataset (corpus, queries, qrels)"""
     corpus_path = data_path / "corpus.jsonl"
-    queries_path = data_path / "queries.jsonl"
-    qrels_path = data_path / "qrels" / "test.tsv"
-    
+    queries_path = data_path / "query.jsonl"
+    qrels_path = data_path / "qrels.tsv"
+
     # Load corpus
     corpus = {}
-    with open(corpus_path, 'r') as f:
+    with open(corpus_path, "r") as f:
         for line in f:
             doc = json.loads(line)
-            corpus[doc['_id']] = doc.get('title', '') + ' ' + doc.get('text', '')
-    
+            corpus[doc["_id"]] = doc.get("title", "") + " " + doc.get("text", "")
+
     # Load queries
     queries = {}
-    with open(queries_path, 'r') as f:
+    with open(queries_path, "r") as f:
         for line in f:
             query = json.loads(line)
-            queries[query['_id']] = query['text']
-    
+            queries[query["_id"]] = query["text"]
+
     # Load qrels
     qrels = {}
-    with open(qrels_path, 'r') as f:
+    with open(qrels_path, "r") as f:
         next(f)  # Skip header
         for line in f:
-            parts = line.strip().split('\t')
+            parts = line.strip().split("\t")
             if len(parts) >= 4:
                 query_id, _, doc_id, relevance = parts[:4]
                 relevance = int(relevance)
@@ -48,7 +48,7 @@ def load_beir_data(data_path: Path) -> Tuple[Dict, Dict, Dict]:
                     if query_id not in qrels:
                         qrels[query_id] = {}
                     qrels[query_id][doc_id] = relevance
-    
+
     return corpus, queries, qrels
 
 
@@ -56,14 +56,14 @@ def compute_embeddings(
     model: SentenceTransformer,
     texts: List[str],
     batch_size: int = 32,
-    show_progress: bool = True
+    show_progress: bool = True,
 ) -> np.ndarray:
     """Compute embeddings for a list of texts"""
     embeddings = model.encode(
         texts,
         batch_size=batch_size,
         show_progress_bar=show_progress,
-        convert_to_numpy=True
+        convert_to_numpy=True,
     )
     return embeddings
 
@@ -71,7 +71,7 @@ def compute_embeddings(
 def calculate_metrics_at_threshold(
     similarities: Dict[str, Dict[str, float]],
     qrels: Dict[str, Dict[str, int]],
-    threshold: float
+    threshold: float,
 ) -> Dict[str, float]:
     """
     Calculate precision, recall, and F1 score at a given threshold
@@ -81,14 +81,14 @@ def calculate_metrics_at_threshold(
     false_positives = 0
     false_negatives = 0
     true_negatives = 0
-    
+
     for query_id, query_sims in similarities.items():
         relevant_docs = qrels.get(query_id, {})
-        
+
         for doc_id, sim_score in query_sims.items():
             is_relevant = doc_id in relevant_docs
             is_predicted_positive = sim_score >= threshold
-            
+
             if is_relevant and is_predicted_positive:
                 true_positives += 1
             elif is_relevant and not is_predicted_positive:
@@ -97,23 +97,37 @@ def calculate_metrics_at_threshold(
                 false_positives += 1
             else:
                 true_negatives += 1
-    
+
     # Calculate metrics
-    precision = true_positives / (true_positives + false_positives) if (true_positives + false_positives) > 0 else 0
-    recall = true_positives / (true_positives + false_negatives) if (true_positives + false_negatives) > 0 else 0
-    f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-    accuracy = (true_positives + true_negatives) / (true_positives + false_positives + false_negatives + true_negatives)
-    
+    precision = (
+        true_positives / (true_positives + false_positives)
+        if (true_positives + false_positives) > 0
+        else 0
+    )
+    recall = (
+        true_positives / (true_positives + false_negatives)
+        if (true_positives + false_negatives) > 0
+        else 0
+    )
+    f1 = (
+        2 * (precision * recall) / (precision + recall)
+        if (precision + recall) > 0
+        else 0
+    )
+    accuracy = (true_positives + true_negatives) / (
+        true_positives + false_positives + false_negatives + true_negatives
+    )
+
     return {
-        'threshold': threshold,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-        'accuracy': accuracy,
-        'true_positives': true_positives,
-        'false_positives': false_positives,
-        'false_negatives': false_negatives,
-        'true_negatives': true_negatives
+        "threshold": threshold,
+        "precision": precision,
+        "recall": recall,
+        "f1": f1,
+        "accuracy": accuracy,
+        "true_positives": true_positives,
+        "false_positives": false_positives,
+        "false_negatives": false_negatives,
+        "true_negatives": true_negatives,
     }
 
 
@@ -123,11 +137,11 @@ def evaluate_thresholds(
     thresholds: List[float],
     batch_size: int = 32,
     use_filtered_corpus: bool = True,
-    progress_callback=None
+    progress_callback=None,
 ) -> Dict:
     """
     Evaluate model at different similarity thresholds
-    
+
     Args:
         model_name: Name of the embedding model
         data_path: Path to BEIR dataset
@@ -136,27 +150,31 @@ def evaluate_thresholds(
         use_filtered_corpus: If True, only use documents in qrels for each query
         progress_callback: Optional callback for progress updates
     """
-    
+
     # Load model
     if progress_callback:
-        progress_callback({'type': 'log', 'level': 'info', 'message': f'Loading model: {model_name}'})
+        progress_callback(
+            {"type": "log", "level": "info", "message": f"Loading model: {model_name}"}
+        )
     model = SentenceTransformer(model_name)
-    
+
     # Load data
     if progress_callback:
-        progress_callback({'type': 'log', 'level': 'info', 'message': 'Loading BEIR data...'})
+        progress_callback(
+            {"type": "log", "level": "info", "message": "Loading BEIR data..."}
+        )
     corpus, queries, qrels = load_beir_data(data_path)
-    
+
     # Calculate similarities for all query-document pairs
     similarities = {}
     total_queries = len(qrels)
-    
+
     for idx, (query_id, relevant_docs) in enumerate(qrels.items()):
         if query_id not in queries:
             continue
-            
+
         query_text = queries[query_id]
-        
+
         # Determine which documents to evaluate
         if use_filtered_corpus:
             # Only evaluate against documents in qrels for this query
@@ -165,110 +183,145 @@ def evaluate_thresholds(
             all_doc_ids = list(corpus.keys())
             num_negatives = min(len(doc_ids) * 2, 100)  # Add up to 2x negatives or 100
             negative_samples = [
-                doc_id for doc_id in np.random.choice(all_doc_ids, size=num_negatives, replace=False)
+                doc_id
+                for doc_id in np.random.choice(
+                    all_doc_ids, size=num_negatives, replace=False
+                )
                 if doc_id not in relevant_docs
             ]
             doc_ids.extend(negative_samples)
         else:
             # Evaluate against entire corpus
             doc_ids = list(corpus.keys())
-        
+
         # Get document texts
         doc_texts = [corpus[doc_id] for doc_id in doc_ids if doc_id in corpus]
         doc_ids = [doc_id for doc_id in doc_ids if doc_id in corpus]
-        
+
         if not doc_texts:
             continue
-        
+
         # Compute embeddings
         query_embedding = model.encode([query_text], convert_to_numpy=True)
-        doc_embeddings = model.encode(doc_texts, batch_size=batch_size, convert_to_numpy=True, show_progress_bar=False)
-        
+        doc_embeddings = model.encode(
+            doc_texts,
+            batch_size=batch_size,
+            convert_to_numpy=True,
+            show_progress_bar=False,
+        )
+
         # Calculate cosine similarities
-        query_embedding = query_embedding / np.linalg.norm(query_embedding, axis=1, keepdims=True)
-        doc_embeddings = doc_embeddings / np.linalg.norm(doc_embeddings, axis=1, keepdims=True)
+        query_embedding = query_embedding / np.linalg.norm(
+            query_embedding, axis=1, keepdims=True
+        )
+        doc_embeddings = doc_embeddings / np.linalg.norm(
+            doc_embeddings, axis=1, keepdims=True
+        )
         sims = np.dot(doc_embeddings, query_embedding.T).flatten()
-        
+
         # Store similarities
-        similarities[query_id] = {doc_id: float(sim) for doc_id, sim in zip(doc_ids, sims)}
-        
+        similarities[query_id] = {
+            doc_id: float(sim) for doc_id, sim in zip(doc_ids, sims)
+        }
+
         # Progress update
         if progress_callback and idx % 10 == 0:
-            progress = int((idx + 1) / total_queries * 50)  # First 50% for similarity calculation
-            progress_callback({
-                'type': 'progress',
-                'progress': progress,
-                'message': f'Computing similarities: {idx + 1}/{total_queries} queries'
-            })
-    
+            progress = int(
+                (idx + 1) / total_queries * 50
+            )  # First 50% for similarity calculation
+            progress_callback(
+                {
+                    "type": "progress",
+                    "progress": progress,
+                    "message": f"Computing similarities: {idx + 1}/{total_queries} queries",
+                }
+            )
+
     # Evaluate at different thresholds
     results = []
     for i, threshold in enumerate(thresholds):
         metrics = calculate_metrics_at_threshold(similarities, qrels, threshold)
         results.append(metrics)
-        
+
         if progress_callback:
-            progress = 50 + int((i + 1) / len(thresholds) * 50)  # Last 50% for threshold evaluation
-            progress_callback({
-                'type': 'progress',
-                'progress': progress,
-                'message': f'Evaluating threshold {threshold:.3f}'
-            })
-    
+            progress = 50 + int(
+                (i + 1) / len(thresholds) * 50
+            )  # Last 50% for threshold evaluation
+            progress_callback(
+                {
+                    "type": "progress",
+                    "progress": progress,
+                    "message": f"Evaluating threshold {threshold:.3f}",
+                }
+            )
+
     # Find best threshold by F1 score
-    best_result = max(results, key=lambda x: x['f1'])
-    
+    best_result = max(results, key=lambda x: x["f1"])
+
     return {
-        'model_name': model_name,
-        'thresholds_evaluated': thresholds,
-        'results': results,
-        'best_threshold': best_result['threshold'],
-        'best_f1': best_result['f1'],
-        'best_precision': best_result['precision'],
-        'best_recall': best_result['recall'],
-        'corpus_size': len(corpus),
-        'queries_evaluated': len(similarities),
-        'use_filtered_corpus': use_filtered_corpus
+        "model_name": model_name,
+        "thresholds_evaluated": thresholds,
+        "results": results,
+        "best_threshold": best_result["threshold"],
+        "best_f1": best_result["f1"],
+        "best_precision": best_result["precision"],
+        "best_recall": best_result["recall"],
+        "corpus_size": len(corpus),
+        "queries_evaluated": len(similarities),
+        "use_filtered_corpus": use_filtered_corpus,
     }
 
 
 def main():
     """Main function for CLI usage"""
     import argparse
-    
-    parser = argparse.ArgumentParser(description='Evaluate similarity thresholds for BEIR data')
-    parser.add_argument('--model-name', required=True, help='Name of the embedding model')
-    parser.add_argument('--data-path', default='scifact', help='Path to BEIR dataset')
-    parser.add_argument('--thresholds', nargs='+', type=float, 
-                       help='Thresholds to evaluate (default: 0.1 to 0.9 step 0.1)')
-    parser.add_argument('--batch-size', type=int, default=32, help='Batch size for encoding')
-    parser.add_argument('--use-filtered-corpus', action='store_true', 
-                       help='Only evaluate on documents in qrels')
-    parser.add_argument('--output', help='Output file path')
-    
+
+    parser = argparse.ArgumentParser(
+        description="Evaluate similarity thresholds for BEIR data"
+    )
+    parser.add_argument(
+        "--model-name", required=True, help="Name of the embedding model"
+    )
+    parser.add_argument("--data-path", default="scifact", help="Path to BEIR dataset")
+    parser.add_argument(
+        "--thresholds",
+        nargs="+",
+        type=float,
+        help="Thresholds to evaluate (default: 0.1 to 0.9 step 0.1)",
+    )
+    parser.add_argument(
+        "--batch-size", type=int, default=32, help="Batch size for encoding"
+    )
+    parser.add_argument(
+        "--use-filtered-corpus",
+        action="store_true",
+        help="Only evaluate on documents in qrels",
+    )
+    parser.add_argument("--output", help="Output file path")
+
     args = parser.parse_args()
-    
+
     # Default thresholds if not specified
     if args.thresholds is None:
-        args.thresholds = [i/10 for i in range(1, 10)]  # 0.1 to 0.9
-    
+        args.thresholds = [i / 10 for i in range(1, 10)]  # 0.1 to 0.9
+
     # Run evaluation
     results = evaluate_thresholds(
         model_name=args.model_name,
         data_path=Path(args.data_path),
         thresholds=args.thresholds,
         batch_size=args.batch_size,
-        use_filtered_corpus=args.use_filtered_corpus
+        use_filtered_corpus=args.use_filtered_corpus,
     )
-    
+
     # Save or print results
     if args.output:
-        with open(args.output, 'w') as f:
+        with open(args.output, "w") as f:
             json.dump(results, f, indent=2)
         print(f"Results saved to {args.output}")
     else:
         print(json.dumps(results, indent=2))
-    
+
     # Print summary
     print(f"\nBest threshold: {results['best_threshold']:.3f}")
     print(f"Best F1 score: {results['best_f1']:.3f}")
