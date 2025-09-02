@@ -18,6 +18,11 @@ document.addEventListener('DOMContentLoaded', function() {
     loadFileList();
     setupEvaluationForm();
     setupThresholdForm();
+    
+    // Load jobs when jobs tab is activated
+    document.getElementById('jobs-tab').addEventListener('shown.bs.tab', function() {
+        refreshJobs();
+    });
 });
 
 // Load list of available result files
@@ -732,7 +737,7 @@ async function runThresholdTuning() {
     const thresholdBtn = document.getElementById('thresholdBtn');
     const originalBtnText = thresholdBtn.innerHTML;
     thresholdBtn.disabled = true;
-    thresholdBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Running...';
+    thresholdBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Starting...';
     
     // Show progress
     const progressDiv = document.getElementById('thresholdProgress');
@@ -745,9 +750,10 @@ async function runThresholdTuning() {
     progressDiv.style.display = 'block';
     resultsDiv.style.display = 'none';
     tableDiv.style.display = 'none';
-    outputDiv.innerHTML = `<div class="text-info">Starting threshold tuning for ${modelName}...</div>`;
+    outputDiv.innerHTML = `<div class="text-info">Starting background job for ${modelName}...</div>`;
     
     try {
+        // Start background job
         const response = await fetch('/api/threshold-tuning', {
             method: 'POST',
             headers: {
@@ -757,62 +763,122 @@ async function runThresholdTuning() {
                 model_name: modelName,
                 thresholds: thresholds,
                 batch_size: parseInt(batchSize),
-                use_filtered_corpus: useFilteredCorpus
+                use_filtered_corpus: useFilteredCorpus,
+                max_queries: 100
             })
         });
         
         if (!response.ok) {
-            throw new Error(`Threshold tuning failed: ${response.statusText}`);
+            throw new Error(`Failed to start threshold tuning: ${response.statusText}`);
         }
         
-        // Stream the response
-        const reader = response.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+        const jobData = await response.json();
+        const jobId = jobData.job_id;
         
-        while (true) {
-            const { done, value } = await reader.read();
-            if (done) break;
-            
-            buffer += decoder.decode(value, { stream: true });
-            const lines = buffer.split('\n');
-            buffer = lines.pop(); // Keep incomplete line in buffer
-            
-            for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                    try {
-                        const data = JSON.parse(line.slice(6));
-                        
-                        if (data.type === 'progress') {
-                            progressBar.style.width = `${data.progress}%`;
-                            progressBar.textContent = `${data.progress}%`;
-                            progressText.textContent = data.message || 'Processing...';
-                        } else if (data.type === 'log') {
-                            outputDiv.innerHTML += `<div class="${data.level === 'error' ? 'text-danger' : 'text-secondary'}">${escapeHtml(data.message)}</div>`;
-                            outputDiv.scrollTop = outputDiv.scrollHeight;
-                        } else if (data.type === 'complete') {
-                            displayThresholdResults(data.results);
-                            outputDiv.innerHTML += '<div class="text-success fw-bold">✓ Threshold tuning completed successfully!</div>';
-                            showNotification('Threshold tuning completed successfully!', 'success');
-                        } else if (data.type === 'error') {
-                            outputDiv.innerHTML += `<div class="text-danger fw-bold">✗ Error: ${escapeHtml(data.message)}</div>`;
-                            showNotification('Threshold tuning failed!', 'error');
-                        }
-                    } catch (e) {
-                        console.error('Failed to parse SSE data:', e);
-                    }
-                }
-            }
-        }
+        outputDiv.innerHTML += `<div class="text-success">✓ Job started! ID: ${jobId}</div>`;
+        outputDiv.innerHTML += `<div class="text-info">This is a background job - you can continue using the interface.</div>`;
+        
+        // Change button to show polling status
+        thresholdBtn.innerHTML = '<span class="spinner-border spinner-border-sm me-2"></span>Running in Background...';
+        
+        // Start polling for job status
+        pollJobStatus(jobId, progressBar, progressText, outputDiv, resultsDiv, tableDiv, thresholdBtn, originalBtnText);
+        
     } catch (error) {
         outputDiv.innerHTML += `<div class="text-danger fw-bold">✗ Error: ${escapeHtml(error.message)}</div>`;
-        showNotification('Threshold tuning failed!', 'error');
-    } finally {
+        showNotification('Failed to start threshold tuning!', 'error');
+        
         // Re-enable form
         thresholdBtn.disabled = false;
         thresholdBtn.innerHTML = originalBtnText;
         progressDiv.style.display = 'none';
     }
+}
+
+// Poll job status
+async function pollJobStatus(jobId, progressBar, progressText, outputDiv, resultsDiv, tableDiv, thresholdBtn, originalBtnText) {
+    const pollInterval = 2000; // Poll every 2 seconds
+    let lastMessage = '';
+    
+    const poll = async () => {
+        try {
+            const response = await fetch(`/api/jobs/${jobId}`);
+            if (!response.ok) {
+                throw new Error(`Failed to get job status: ${response.statusText}`);
+            }
+            
+            const job = await response.json();
+            
+            // Update progress
+            progressBar.style.width = `${job.progress}%`;
+            progressBar.textContent = `${job.progress}%`;
+            progressText.textContent = job.current_message || 'Processing...';
+            
+            // Show new messages
+            if (job.current_message && job.current_message !== lastMessage) {
+                const level = job.status === 'failed' ? 'danger' : 'info';
+                outputDiv.innerHTML += `<div class="text-${level}">${escapeHtml(job.current_message)}</div>`;
+                outputDiv.scrollTop = outputDiv.scrollHeight;
+                lastMessage = job.current_message;
+            }
+            
+            // Check job status
+            if (job.status === 'completed') {
+                // Job completed successfully
+                outputDiv.innerHTML += '<div class="text-success fw-bold">✓ Background job completed!</div>';
+                outputDiv.innerHTML += '<div class="text-info">Loading results...</div>';
+                
+                // Get results
+                const resultResponse = await fetch(`/api/jobs/${jobId}/result`);
+                if (resultResponse.ok) {
+                    const results = await resultResponse.json();
+                    displayThresholdResults(results);
+                    showNotification('Threshold tuning completed successfully!', 'success');
+                } else {
+                    outputDiv.innerHTML += '<div class="text-warning">Warning: Could not load results</div>';
+                }
+                
+                // Re-enable form
+                thresholdBtn.disabled = false;
+                thresholdBtn.innerHTML = originalBtnText;
+                document.getElementById('thresholdProgress').style.display = 'none';
+                
+            } else if (job.status === 'failed') {
+                // Job failed
+                outputDiv.innerHTML += `<div class="text-danger fw-bold">✗ Job failed: ${escapeHtml(job.error_message || 'Unknown error')}</div>`;
+                showNotification('Threshold tuning failed!', 'error');
+                
+                // Re-enable form
+                thresholdBtn.disabled = false;
+                thresholdBtn.innerHTML = originalBtnText;
+                document.getElementById('thresholdProgress').style.display = 'none';
+                
+            } else if (job.status === 'cancelled') {
+                // Job was cancelled
+                outputDiv.innerHTML += '<div class="text-warning fw-bold">Job was cancelled</div>';
+                showNotification('Threshold tuning was cancelled', 'error');
+                
+                // Re-enable form
+                thresholdBtn.disabled = false;
+                thresholdBtn.innerHTML = originalBtnText;
+                document.getElementById('thresholdProgress').style.display = 'none';
+                
+            } else {
+                // Job still running, continue polling
+                setTimeout(poll, pollInterval);
+            }
+            
+        } catch (error) {
+            console.error('Error polling job status:', error);
+            outputDiv.innerHTML += `<div class="text-danger">Error checking job status: ${escapeHtml(error.message)}</div>`;
+            
+            // Continue polling but less frequently
+            setTimeout(poll, pollInterval * 2);
+        }
+    };
+    
+    // Start polling
+    setTimeout(poll, 1000); // First poll after 1 second
 }
 
 // Display threshold tuning results
@@ -928,4 +994,223 @@ function displayThresholdResults(results) {
         `;
         tbody.appendChild(row);
     });
+}
+
+// Job management functions
+async function refreshJobs() {
+    const jobsList = document.getElementById('jobsList');
+    
+    try {
+        jobsList.innerHTML = '<div class="text-center"><div class="spinner-border" role="status"><span class="visually-hidden">Loading...</span></div></div>';
+        
+        const response = await fetch('/api/jobs');
+        if (!response.ok) {
+            throw new Error(`Failed to fetch jobs: ${response.statusText}`);
+        }
+        
+        const jobs = await response.json();
+        
+        if (jobs.length === 0) {
+            jobsList.innerHTML = `
+                <div class="text-center text-muted py-4">
+                    <i class="bi bi-inbox h1"></i>
+                    <p>No jobs found</p>
+                </div>
+            `;
+            return;
+        }
+        
+        // Sort jobs by creation date (newest first)
+        jobs.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+        
+        let jobsHtml = '';
+        jobs.forEach(job => {
+            const statusBadge = getStatusBadge(job.status);
+            const createdAt = new Date(job.created_at).toLocaleString();
+            const duration = getDuration(job);
+            
+            jobsHtml += `
+                <div class="card mb-3">
+                    <div class="card-body">
+                        <div class="row">
+                            <div class="col-md-8">
+                                <div class="d-flex align-items-center mb-2">
+                                    <h6 class="card-title me-3 mb-0">${job.task_type}</h6>
+                                    ${statusBadge}
+                                </div>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-clock"></i> Created: ${createdAt}
+                                    ${duration ? ` | Duration: ${duration}` : ''}
+                                </p>
+                                <p class="text-muted mb-1">
+                                    <i class="bi bi-tag"></i> Job ID: <code>${job.job_id}</code>
+                                </p>
+                                ${job.current_message ? `<p class="text-info mb-0"><i class="bi bi-info-circle"></i> ${job.current_message}</p>` : ''}
+                                ${job.error_message ? `<p class="text-danger mb-0"><i class="bi bi-exclamation-circle"></i> ${job.error_message}</p>` : ''}
+                            </div>
+                            <div class="col-md-4">
+                                <div class="text-end">
+                                    <div class="progress mb-2" style="height: 8px;">
+                                        <div class="progress-bar" role="progressbar" style="width: ${job.progress}%"></div>
+                                    </div>
+                                    <small class="text-muted">${job.progress}% complete</small>
+                                    <div class="mt-2">
+                                        ${job.status === 'completed' ? `<button class="btn btn-outline-success btn-sm me-2" onclick="viewJobResult('${job.job_id}')"><i class="bi bi-eye"></i> View Results</button>` : ''}
+                                        ${job.status === 'running' || job.status === 'pending' ? `<button class="btn btn-outline-danger btn-sm me-2" onclick="cancelJob('${job.job_id}')"><i class="bi bi-stop-circle"></i> Cancel</button>` : ''}
+                                        <button class="btn btn-outline-secondary btn-sm" onclick="showJobDetails('${job.job_id}')"><i class="bi bi-info"></i> Details</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        });
+        
+        jobsList.innerHTML = jobsHtml;
+        
+    } catch (error) {
+        jobsList.innerHTML = `
+            <div class="alert alert-danger" role="alert">
+                <i class="bi bi-exclamation-triangle"></i> Failed to load jobs: ${error.message}
+            </div>
+        `;
+    }
+}
+
+function getStatusBadge(status) {
+    const badges = {
+        'pending': '<span class="badge bg-secondary">Pending</span>',
+        'running': '<span class="badge bg-primary">Running</span>',
+        'completed': '<span class="badge bg-success">Completed</span>',
+        'failed': '<span class="badge bg-danger">Failed</span>',
+        'cancelled': '<span class="badge bg-warning">Cancelled</span>'
+    };
+    return badges[status] || `<span class="badge bg-secondary">${status}</span>`;
+}
+
+function getDuration(job) {
+    if (!job.started_at) return null;
+    
+    const start = new Date(job.started_at);
+    const end = job.completed_at ? new Date(job.completed_at) : new Date();
+    const durationMs = end - start;
+    
+    const seconds = Math.floor(durationMs / 1000);
+    const minutes = Math.floor(seconds / 60);
+    const hours = Math.floor(minutes / 60);
+    
+    if (hours > 0) {
+        return `${hours}h ${minutes % 60}m`;
+    } else if (minutes > 0) {
+        return `${minutes}m ${seconds % 60}s`;
+    } else {
+        return `${seconds}s`;
+    }
+}
+
+async function viewJobResult(jobId) {
+    try {
+        const response = await fetch(`/api/jobs/${jobId}/result`);
+        if (!response.ok) {
+            throw new Error(`Failed to get job result: ${response.statusText}`);
+        }
+        
+        const results = await response.json();
+        
+        // Switch to threshold tab and display results
+        document.getElementById('threshold-tab').click();
+        setTimeout(() => {
+            displayThresholdResults(results);
+            showNotification('Job results loaded successfully!', 'success');
+        }, 100);
+        
+    } catch (error) {
+        showNotification(`Failed to load job results: ${error.message}`, 'error');
+    }
+}
+
+async function cancelJob(jobId) {
+    if (!confirm('Are you sure you want to cancel this job?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`/api/jobs/${jobId}`, {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to cancel job: ${response.statusText}`);
+        }
+        
+        showNotification('Job cancelled successfully', 'success');
+        refreshJobs();
+        
+    } catch (error) {
+        showNotification(`Failed to cancel job: ${error.message}`, 'error');
+    }
+}
+
+async function showJobDetails(jobId) {
+    try {
+        const response = await fetch(`/api/jobs/${jobId}`);
+        if (!response.ok) {
+            throw new Error(`Failed to get job details: ${response.statusText}`);
+        }
+        
+        const job = await response.json();
+        
+        // Create modal with job details
+        const modal = document.createElement('div');
+        modal.className = 'modal fade';
+        modal.innerHTML = `
+            <div class="modal-dialog modal-lg">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Job Details</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                    </div>
+                    <div class="modal-body">
+                        <pre>${JSON.stringify(job, null, 2)}</pre>
+                    </div>
+                </div>
+            </div>
+        `;
+        
+        document.body.appendChild(modal);
+        const modalInstance = new bootstrap.Modal(modal);
+        modalInstance.show();
+        
+        // Remove modal when hidden
+        modal.addEventListener('hidden.bs.modal', () => {
+            document.body.removeChild(modal);
+        });
+        
+    } catch (error) {
+        showNotification(`Failed to get job details: ${error.message}`, 'error');
+    }
+}
+
+async function cleanupOldJobs() {
+    if (!confirm('This will delete old completed jobs (7+ days old). Are you sure?')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/jobs', {
+            method: 'DELETE'
+        });
+        
+        if (!response.ok) {
+            throw new Error(`Failed to cleanup jobs: ${response.statusText}`);
+        }
+        
+        const result = await response.json();
+        showNotification(result.message, 'success');
+        refreshJobs();
+        
+    } catch (error) {
+        showNotification(`Failed to cleanup jobs: ${error.message}`, 'error');
+    }
 }

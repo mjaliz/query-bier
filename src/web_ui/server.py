@@ -16,6 +16,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
+# Import job manager
+from job_manager import JobManager, JobStatus
+
 app = FastAPI(title="BEIR Results Comparison API")
 
 # Add CORS middleware
@@ -30,6 +33,10 @@ app.add_middleware(
 # Path to results directory
 RESULTS_DIR = Path(__file__).parent.parent.parent / "results"
 WEB_UI_DIR = Path(__file__).parent
+
+# Initialize job manager
+JOBS_DIR = Path(__file__).parent.parent.parent / "jobs"
+job_manager = JobManager(JOBS_DIR)
 
 
 @app.get("/")
@@ -174,6 +181,55 @@ async def evaluate_model(request: EvaluationRequest):
     )
 
 
+def run_threshold_tuning_background(job_id: str, request: ThresholdTuningRequest):
+    """Run threshold tuning in background thread"""
+    try:
+        # Default thresholds if not specified
+        thresholds = request.thresholds or [i / 10 for i in range(1, 10)]
+        
+        # Use the data path
+        data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
+        
+        # Check if data exists
+        if not data_path.exists():
+            raise Exception(f"Data path not found: {data_path}")
+        
+        # Import threshold tuning module
+        sys.path.insert(0, str(WEB_UI_DIR))
+        from threshold_tuning import evaluate_thresholds
+        
+        def progress_callback(data):
+            # Update job with progress info
+            progress = data.get('progress', 0)
+            message = data.get('message', '')
+            job_manager.update_job_status(job_id, JobStatus.RUNNING, progress, message)
+            
+            # Check if job was cancelled
+            job = job_manager.get_job(job_id)
+            if job and job.status == JobStatus.CANCELLED:
+                raise Exception("Job was cancelled")
+        
+        # Run evaluation
+        results = evaluate_thresholds(
+            request.model_name,
+            data_path,
+            thresholds,
+            request.batch_size,
+            request.use_filtered_corpus,
+            progress_callback,
+            request.max_queries or 100,
+        )
+        
+        # Save results
+        job_manager.set_job_result(job_id, results)
+        job_manager.update_job_status(job_id, JobStatus.COMPLETED, 100, 
+                                    f"✓ Evaluation complete! Best threshold: {results['best_threshold']:.3f}")
+        
+    except Exception as e:
+        job_manager.update_job_status(job_id, JobStatus.FAILED, 
+                                    error_message=str(e))
+
+
 async def run_threshold_tuning_process(request: ThresholdTuningRequest):
     """Run threshold tuning evaluation and stream the output"""
     import queue
@@ -259,8 +315,27 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
 
 
 @app.post("/api/threshold-tuning")
-async def threshold_tuning(request: ThresholdTuningRequest):
-    """Run threshold tuning evaluation and stream progress"""
+async def start_threshold_tuning(request: ThresholdTuningRequest):
+    """Start threshold tuning as background job"""
+    try:
+        # Create background job
+        job_id = job_manager.create_job(
+            task_type="threshold_tuning",
+            request_params=request.model_dump()
+        )
+        
+        # Start background task
+        job_manager.start_background_task(job_id, run_threshold_tuning_background, request)
+        
+        return {"job_id": job_id, "status": "started", "message": "Threshold tuning job started"}
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/threshold-tuning/stream")
+async def threshold_tuning_stream(request: ThresholdTuningRequest):
+    """Run threshold tuning evaluation and stream progress (legacy endpoint)"""
     return StreamingResponse(
         run_threshold_tuning_process(request),
         media_type="text/event-stream",
@@ -270,6 +345,56 @@ async def threshold_tuning(request: ThresholdTuningRequest):
             "Access-Control-Allow-Origin": "*",
         },
     )
+
+
+@app.get("/api/jobs")
+async def list_jobs():
+    """Get all jobs"""
+    jobs = job_manager.get_all_jobs()
+    return [job.to_dict() for job in jobs]
+
+
+@app.get("/api/jobs/{job_id}")
+async def get_job_status(job_id: str):
+    """Get job status and details"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return job.to_dict()
+
+
+@app.get("/api/jobs/{job_id}/result")
+async def get_job_result(job_id: str):
+    """Get job results"""
+    job = job_manager.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    if job.status != JobStatus.COMPLETED:
+        raise HTTPException(status_code=400, detail=f"Job not completed (status: {job.status})")
+    
+    result = job_manager.get_job_result(job_id)
+    if not result:
+        raise HTTPException(status_code=404, detail="Job result not found")
+    
+    return result
+
+
+@app.delete("/api/jobs/{job_id}")
+async def cancel_job(job_id: str):
+    """Cancel a running job"""
+    if not job_manager.cancel_job(job_id):
+        raise HTTPException(status_code=404, detail="Job not found or cannot be cancelled")
+    
+    return {"message": "Job cancelled successfully"}
+
+
+@app.delete("/api/jobs")
+async def cleanup_old_jobs():
+    """Clean up old completed jobs (7+ days old)"""
+    count = job_manager.cleanup_old_jobs()
+    return {"message": f"Cleaned up {count} old jobs"}
 
 
 if __name__ == "__main__":

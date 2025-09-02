@@ -267,20 +267,53 @@ def evaluate_thresholds(
             progress_callback({"type": "log", "level": "info", 
                              "message": f"Processing {max_queries} queries (out of {len(qrels)} total)"})
     
-    # Log corpus mode details
+    # Log corpus mode details and estimate computations
     if progress_callback:
         if use_filtered_corpus:
+            # Estimate average docs per query for filtered mode
+            avg_relevant = sum(len(docs) for docs in qrels_items[:min(10, len(qrels_items))]) / min(10, len(qrels_items))
+            avg_negatives = min(avg_relevant * 2, 100)
+            estimated_docs_per_query = avg_relevant + avg_negatives
+            total_estimated_computations = int(total_queries * estimated_docs_per_query)
+            
             progress_callback({
                 "type": "log", 
                 "level": "info",
-                "message": "Mode: Evaluating each query against its relevant docs + negative samples"
+                "message": f"Mode: Filtered Corpus - ~{int(estimated_docs_per_query)} docs per query"
+            })
+            progress_callback({
+                "type": "log",
+                "level": "info", 
+                "message": f"Estimated computations: {total_estimated_computations:,} similarity scores"
             })
         else:
+            total_computations = total_queries * len(corpus)
             progress_callback({
                 "type": "log", 
                 "level": "info",
-                "message": f"Mode: Evaluating each query against full corpus ({len(corpus)} documents)"
+                "message": f"Mode: Full Corpus - {len(corpus):,} docs per query"
             })
+            progress_callback({
+                "type": "log",
+                "level": "warning",
+                "message": f"⚠️ Warning: {total_computations:,} computations needed (very slow!)"
+            })
+            
+            # Estimate time
+            sims_per_sec = 50000 if model_device == 'cuda' else 5000  # Rough estimate
+            estimated_time = total_computations / sims_per_sec
+            if estimated_time > 60:
+                progress_callback({
+                    "type": "log",
+                    "level": "warning", 
+                    "message": f"Estimated time: ~{estimated_time/60:.1f} minutes on {model_device.upper()}"
+                })
+            else:
+                progress_callback({
+                    "type": "log",
+                    "level": "info",
+                    "message": f"Estimated time: ~{estimated_time:.0f} seconds on {model_device.upper()}"
+                })
 
     for idx, (query_id, relevant_docs) in enumerate(qrels_items):
         if query_id not in queries:
@@ -395,14 +428,24 @@ def evaluate_thresholds(
             progress_callback({"type": "error", "message": error_msg})
         raise Exception(error_msg)
     
-    # Log summary of similarities computed
+    # Log summary of similarities computed with timing
     total_pairs = sum(len(sims) for sims in similarities.values())
+    encoding_time = time.time() - start_time
+    
     if progress_callback:
         progress_callback({
             "type": "log",
             "level": "info",
-            "message": f"Computed {total_pairs} query-document similarity scores"
+            "message": f"✓ Computed {total_pairs:,} similarity scores in {encoding_time:.1f}s"
         })
+        
+        avg_speed = total_pairs / encoding_time if encoding_time > 0 else 0
+        progress_callback({
+            "type": "log", 
+            "level": "info",
+            "message": f"Average encoding speed: {avg_speed:,.0f} pairs/sec on {model_device.upper()}"
+        })
+        
         progress_callback({
             "type": "log",
             "level": "info",
