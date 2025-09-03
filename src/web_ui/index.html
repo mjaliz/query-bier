@@ -608,11 +608,11 @@
                                                             <table class="table table-sm table-hover" id="falsePositivesTable">
                                                                 <thead class="table-danger">
                                                                     <tr>
-                                                                        <th>Score</th>
-                                                                        <th>Query</th>
-                                                                        <th>Document ID</th>
-                                                                        <th>Document Text</th>
-                                                                        <th>Actions</th>
+                                                                        <th width="10%">Similarity Score</th>
+                                                                        <th width="25%">Related Query</th>
+                                                                        <th width="15%">Document ID</th>
+                                                                        <th width="40%">False Positive Document</th>
+                                                                        <th width="10%">Actions</th>
                                                                     </tr>
                                                                 </thead>
                                                                 <tbody id="falsePositivesTableBody">
@@ -732,6 +732,7 @@
                                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                         </div>
                                         <div class="modal-body">
+                                            <!-- Document Info Header -->
                                             <div class="row mb-3">
                                                 <div class="col-md-6">
                                                     <strong>Document ID:</strong>
@@ -742,16 +743,44 @@
                                                     <span class="badge bg-primary" id="docDetailScore">-</span>
                                                 </div>
                                             </div>
+                                            
+                                            <!-- Query Context (highlighted for false positives) -->
                                             <div class="row mb-3">
                                                 <div class="col-12">
-                                                    <strong>Query:</strong>
-                                                    <p id="docDetailQuery" class="border rounded p-2 bg-light small">-</p>
+                                                    <div class="card" id="queryContextCard">
+                                                        <div class="card-header bg-primary bg-opacity-10">
+                                                            <strong><i class="bi bi-search"></i> Related Query Context:</strong>
+                                                        </div>
+                                                        <div class="card-body">
+                                                            <p id="docDetailQuery" class="mb-0">-</p>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
+                                            
+                                            <!-- Relationship Explanation -->
+                                            <div class="row mb-3" id="relationshipExplanation" style="display: none;">
+                                                <div class="col-12">
+                                                    <div class="alert alert-danger">
+                                                        <i class="bi bi-exclamation-triangle"></i>
+                                                        <strong>False Positive Alert:</strong> This document scored high for the query above, 
+                                                        but it's not actually relevant. Compare the query and document to understand why 
+                                                        the embedding model thought they were similar.
+                                                    </div>
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Document Text -->
                                             <div class="row">
                                                 <div class="col-12">
-                                                    <strong>Full Document Text:</strong>
-                                                    <div id="docDetailText" class="border rounded p-3 bg-light" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap;">
+                                                    <div class="card">
+                                                        <div class="card-header bg-light">
+                                                            <strong><i class="bi bi-file-text"></i> Full Document Text:</strong>
+                                                        </div>
+                                                        <div class="card-body">
+                                                            <div id="docDetailText" class="border rounded p-3 bg-light" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap;">
+                                                            </div>
+                                                        </div>
                                                     </div>
                                                 </div>
                                             </div>

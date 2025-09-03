@@ -1510,18 +1510,39 @@ function showQueryDetails(queryIndex) {
         console.log('First false positive:', query.false_positives[0]); // Debug log
     }
     fpContainer.innerHTML = query.false_positives.map((doc, index) => `
-        <div class="card mb-2 border-danger">
-            <div class="card-body p-3">
-                <div class="d-flex justify-content-between align-items-start mb-2">
+        <div class="card mb-3 border-danger">
+            <div class="card-header bg-danger bg-opacity-10 p-2">
+                <div class="d-flex justify-content-between align-items-center">
                     <span class="badge bg-danger">Score: ${doc.score.toFixed(3)}</span>
-                    <span class="badge bg-danger">False Match</span>
+                    <span class="badge bg-outline-danger">False Match</span>
                 </div>
-                <p class="mb-2 small">${doc.text}...</p>
+            </div>
+            <div class="card-body p-3">
+                <div class="mb-2">
+                    <strong class="text-danger">Related Query:</strong>
+                    <div class="border rounded p-2 bg-light mt-1">
+                        <div class="d-flex justify-content-between align-items-start">
+                            <small class="text-primary"><strong>ID:</strong> ${query.query_id}</small>
+                            <small class="text-muted">Query for this false positive</small>
+                        </div>
+                        <div class="mt-1 small">${query.query_text}</div>
+                    </div>
+                </div>
+                <div class="mb-2">
+                    <strong class="text-danger">False Positive Document:</strong>
+                    <p class="mb-1 small border rounded p-2">${doc.text}...</p>
+                </div>
                 <div class="d-flex justify-content-between align-items-center">
                     <small class="text-muted">Doc ID: ${doc.doc_id}</small>
                     <button class="btn btn-sm btn-outline-info" onclick="showDocumentDetails('${doc.doc_id}', ${doc.score}, '${query.query_text}', 'fp', ${queryIndex}, ${index})">
                         <i class="bi bi-zoom-in"></i> Full Text
                     </button>
+                </div>
+                <div class="mt-2">
+                    <small class="text-danger">
+                        <i class="bi bi-exclamation-triangle"></i> 
+                        This document scored ${doc.score.toFixed(3)} for the query above, but it's not actually relevant.
+                    </small>
                 </div>
             </div>
         </div>
@@ -1641,14 +1662,33 @@ function filterFalsePositives() {
     // Update table
     const tbody = document.getElementById('falsePositivesTableBody');
     tbody.innerHTML = filtered.map(fp => `
-        <tr>
+        <tr class="align-middle">
             <td><span class="badge bg-danger">${fp.score.toFixed(3)}</span></td>
-            <td title="${fp.query_text}"><small>${fp.query_id}</small></td>
-            <td><code>${fp.doc_id}</code></td>
-            <td title="${fp.text}">${fp.text.substring(0, 80)}${fp.text.length > 80 ? '...' : ''}</td>
             <td>
-                <button class="btn btn-sm btn-outline-info" onclick="showDocumentDetails('${fp.doc_id}', ${fp.score}, '${fp.query_text}', 'fp')">
-                    <i class="bi bi-zoom-in"></i> View
+                <div class="mb-1">
+                    <strong class="text-primary">${fp.query_id}</strong>
+                </div>
+                <div class="small text-muted" title="${fp.query_text}">
+                    ${fp.query_text.substring(0, 50)}${fp.query_text.length > 50 ? '...' : ''}
+                </div>
+            </td>
+            <td>
+                <code class="small">${fp.doc_id}</code>
+            </td>
+            <td>
+                <div class="small" title="${fp.text}">
+                    ${fp.text.substring(0, 60)}${fp.text.length > 60 ? '...' : ''}
+                </div>
+                <div class="mt-1">
+                    <small class="text-danger">
+                        <i class="bi bi-exclamation-triangle"></i> 
+                        Incorrectly matched with query "${fp.query_id}"
+                    </small>
+                </div>
+            </td>
+            <td>
+                <button class="btn btn-sm btn-outline-info" onclick="showDocumentDetails('${fp.doc_id}', ${fp.score}, '${fp.query_text}', 'fp')" title="View full document and query details">
+                    <i class="bi bi-zoom-in"></i> Details
                 </button>
             </td>
         </tr>
@@ -1672,6 +1712,23 @@ async function showDocumentDetails(docId, score, queryText, type, queryIndex, do
     // Set badge color based on type
     const badge = document.getElementById('docDetailScore');
     badge.className = `badge ${type === 'tp' ? 'bg-success' : type === 'fp' ? 'bg-danger' : 'bg-warning'}`;
+    
+    // Update query context card styling based on type
+    const queryCard = document.getElementById('queryContextCard');
+    const queryCardHeader = queryCard.querySelector('.card-header');
+    if (type === 'fp') {
+        queryCardHeader.className = 'card-header bg-danger bg-opacity-10';
+        queryCardHeader.innerHTML = '<strong><i class="bi bi-exclamation-triangle"></i> Query That Caused False Positive:</strong>';
+        document.getElementById('relationshipExplanation').style.display = 'block';
+    } else if (type === 'tp') {
+        queryCardHeader.className = 'card-header bg-success bg-opacity-10';
+        queryCardHeader.innerHTML = '<strong><i class="bi bi-check-circle"></i> Successfully Matched Query:</strong>';
+        document.getElementById('relationshipExplanation').style.display = 'none';
+    } else {
+        queryCardHeader.className = 'card-header bg-warning bg-opacity-10';
+        queryCardHeader.innerHTML = '<strong><i class="bi bi-dash-circle"></i> Missed Query (Should Have Matched):</strong>';
+        document.getElementById('relationshipExplanation').style.display = 'none';
+    }
     
     // Show loading text
     document.getElementById('docDetailText').textContent = 'Loading full document text...';
