@@ -76,60 +76,91 @@ def calculate_metrics_at_threshold(
 ) -> Dict[str, float]:
     """
     Calculate precision, recall, and F1 score at a given threshold
-    Treats the task as binary classification: above threshold = positive prediction
+    Computes metrics per query and then averages across all queries
     """
-    true_positives = 0
-    false_positives = 0
-    false_negatives = 0
-    true_negatives = 0
+    query_metrics = []
+    total_true_positives = 0
+    total_false_positives = 0
+    total_false_negatives = 0
+    total_true_negatives = 0
 
     for query_id, query_sims in similarities.items():
         relevant_docs = qrels.get(query_id, {})
+        
+        if not relevant_docs:
+            # Skip queries with no relevant documents
+            continue
+        
+        query_tp = 0
+        query_fp = 0
+        query_fn = 0
+        query_tn = 0
 
         for doc_id, sim_score in query_sims.items():
             is_relevant = doc_id in relevant_docs
             is_predicted_positive = sim_score >= threshold
 
             if is_relevant and is_predicted_positive:
-                true_positives += 1
+                query_tp += 1
             elif is_relevant and not is_predicted_positive:
-                false_negatives += 1
+                query_fn += 1
             elif not is_relevant and is_predicted_positive:
-                false_positives += 1
+                query_fp += 1
             else:
-                true_negatives += 1
+                query_tn += 1
 
-    # Calculate metrics
-    precision = (
-        true_positives / (true_positives + false_positives)
-        if (true_positives + false_positives) > 0
-        else 0
-    )
-    recall = (
-        true_positives / (true_positives + false_negatives)
-        if (true_positives + false_negatives) > 0
-        else 0
-    )
-    f1 = (
-        2 * (precision * recall) / (precision + recall)
-        if (precision + recall) > 0
-        else 0
-    )
+        # Calculate per-query metrics
+        query_precision = (
+            query_tp / (query_tp + query_fp)
+            if (query_tp + query_fp) > 0
+            else 0
+        )
+        query_recall = (
+            query_tp / (query_tp + query_fn)
+            if (query_tp + query_fn) > 0
+            else 0
+        )
+        query_f1 = (
+            2 * (query_precision * query_recall) / (query_precision + query_recall)
+            if (query_precision + query_recall) > 0
+            else 0
+        )
+        
+        query_metrics.append({
+            "precision": query_precision,
+            "recall": query_recall,
+            "f1": query_f1
+        })
+        
+        # Accumulate for total counts
+        total_true_positives += query_tp
+        total_false_positives += query_fp
+        total_false_negatives += query_fn
+        total_true_negatives += query_tn
+
+    # Calculate averaged metrics across all queries
+    if query_metrics:
+        avg_precision = float(np.mean([m["precision"] for m in query_metrics]))
+        avg_recall = float(np.mean([m["recall"] for m in query_metrics]))
+        avg_f1 = float(np.mean([m["f1"] for m in query_metrics]))
+    else:
+        avg_precision = avg_recall = avg_f1 = 0.0
     
-    # Calculate accuracy with safety check for division by zero
-    total = true_positives + false_positives + false_negatives + true_negatives
-    accuracy = (true_positives + true_negatives) / total if total > 0 else 0
+    # Calculate overall accuracy
+    total = total_true_positives + total_false_positives + total_false_negatives + total_true_negatives
+    accuracy = (total_true_positives + total_true_negatives) / total if total > 0 else 0
 
     return {
         "threshold": threshold,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
+        "precision": avg_precision,
+        "recall": avg_recall,
+        "f1": avg_f1,
         "accuracy": accuracy,
-        "true_positives": true_positives,
-        "false_positives": false_positives,
-        "false_negatives": false_negatives,
-        "true_negatives": true_negatives,
+        "true_positives": total_true_positives,
+        "false_positives": total_false_positives,
+        "false_negatives": total_false_negatives,
+        "true_negatives": total_true_negatives,
+        "num_queries_evaluated": len(query_metrics),
     }
 
 
@@ -140,7 +171,7 @@ def evaluate_thresholds_with_streaming(
     batch_size: int = 32,
     use_filtered_corpus: bool = True,
     progress_callback=None,
-    max_queries: int = None,
+    max_queries: Optional[int] = None,
 ) -> Dict:
     """Streaming version with detailed progress logs"""
     return evaluate_thresholds(
