@@ -880,7 +880,8 @@ def evaluate_fixed_threshold_with_details(
             "message": f"✓ Evaluation complete in {encoding_time:.1f}s"
         })
     
-    return {
+    # Send summary first
+    summary_result = {
         "model_name": model_name,
         "threshold": threshold,
         "overall_metrics": {
@@ -898,8 +899,33 @@ def evaluate_fixed_threshold_with_details(
         },
         "queries_evaluated": len(query_details),
         "corpus_size": len(corpus),
-        "query_details": query_details,
         "evaluation_time": encoding_time
+    }
+    
+    if progress_callback:
+        # Send summary first
+        progress_callback({
+            "type": "summary_complete",
+            "summary": summary_result
+        })
+        
+        # Send each query detail separately
+        for i, query_detail in enumerate(query_details):
+            progress_callback({
+                "type": "query_detail",
+                "query_index": i,
+                "query_detail": query_detail
+            })
+            
+        # Signal completion
+        progress_callback({
+            "type": "all_queries_sent",
+            "total_queries": len(query_details)
+        })
+    
+    return {
+        **summary_result,
+        "query_details": query_details  # Keep this for non-streaming usage
     }
 
 

@@ -1251,6 +1251,10 @@ function setupFixedThresholdForm() {
 // Run fixed threshold analysis
 async function runFixedThresholdAnalysis() {
     console.log('runFixedThresholdAnalysis function called'); // Debug log
+    
+    // Reset global results
+    window.currentAnalysisResults = null;
+    
     const modelName = document.getElementById('fixedThresholdModel').value;
     const threshold = parseFloat(document.getElementById('fixedThresholdValue').value);
     const batchSize = parseInt(document.getElementById('fixedThresholdBatchSize').value);
@@ -1351,6 +1355,9 @@ async function runFixedThresholdAnalysis() {
     }
 }
 
+// Global variable to store incremental results
+window.currentAnalysisResults = null;
+
 function handleFixedThresholdMessage(data, progressBar, logsDiv) {
     if (data.type === 'progress') {
         progressBar.style.width = `${data.progress}%`;
@@ -1369,13 +1376,40 @@ function handleFixedThresholdMessage(data, progressBar, logsDiv) {
         logsDiv.innerHTML += logEntry;
         logsDiv.scrollTop = logsDiv.scrollHeight;
         showNotification(`Analysis failed: ${data.message}`, 'error');
-    } else if (data.type === 'complete') {
+    } else if (data.type === 'summary_complete') {
+        // Initialize results with summary
+        window.currentAnalysisResults = {
+            ...data.summary,
+            query_details: []
+        };
+        console.log('Summary received:', data.summary);
+    } else if (data.type === 'query_detail') {
+        // Add query detail incrementally
+        if (window.currentAnalysisResults) {
+            window.currentAnalysisResults.query_details.push(data.query_detail);
+            console.log(`Received query detail ${data.query_index + 1}`);
+        }
+    } else if (data.type === 'all_queries_sent') {
         progressBar.style.width = '100%';
         const logEntry = `<div class="text-success">[${new Date().toLocaleTimeString()}] Analysis completed successfully!</div>`;
         logsDiv.innerHTML += logEntry;
         logsDiv.scrollTop = logsDiv.scrollHeight;
         
+        console.log('All queries received, total:', data.total_queries);
+        console.log('Final results:', window.currentAnalysisResults);
+        
         // Display results
+        if (window.currentAnalysisResults) {
+            displayFixedThresholdResults(window.currentAnalysisResults);
+            showNotification('Analysis completed successfully!', 'success');
+        }
+    } else if (data.type === 'complete') {
+        // Fallback for old format
+        progressBar.style.width = '100%';
+        const logEntry = `<div class="text-success">[${new Date().toLocaleTimeString()}] Analysis completed successfully!</div>`;
+        logsDiv.innerHTML += logEntry;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        
         displayFixedThresholdResults(data.results);
         showNotification('Analysis completed successfully!', 'success');
     }
@@ -1384,6 +1418,13 @@ function handleFixedThresholdMessage(data, progressBar, logsDiv) {
 function displayFixedThresholdResults(results) {
     console.log('Received results:', results); // Debug log
     console.log('Query details:', results.query_details); // Debug log
+    
+    // Validate results structure
+    if (!results || !results.query_details) {
+        console.error('Invalid results structure:', results);
+        showNotification('Error: Invalid results received', 'error');
+        return;
+    }
     
     // Hide progress, show results
     document.getElementById('fixedThresholdProgress').style.display = 'none';
