@@ -18,6 +18,7 @@ document.addEventListener('DOMContentLoaded', function() {
     loadFileList();
     setupEvaluationForm();
     setupThresholdForm();
+    setupFixedThresholdForm();
     
     // Load jobs when jobs tab is activated
     document.getElementById('jobs-tab').addEventListener('shown.bs.tab', function() {
@@ -1222,4 +1223,220 @@ async function cleanupOldJobs() {
     } catch (error) {
         showNotification(`Failed to cleanup jobs: ${error.message}`, 'error');
     }
+}
+
+// Setup fixed threshold analysis form
+function setupFixedThresholdForm() {
+    const form = document.getElementById('fixedThresholdForm');
+    if (!form) return;
+    
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        await runFixedThresholdAnalysis();
+    });
+}
+
+// Run fixed threshold analysis
+async function runFixedThresholdAnalysis() {
+    const modelName = document.getElementById('fixedThresholdModel').value;
+    const threshold = parseFloat(document.getElementById('fixedThresholdValue').value);
+    const batchSize = parseInt(document.getElementById('fixedThresholdBatchSize').value);
+    const maxQueriesValue = document.getElementById('fixedThresholdMaxQueries').value;
+    const maxQueries = maxQueriesValue ? parseInt(maxQueriesValue) : null;
+    const maxFalsePositives = parseInt(document.getElementById('maxFalsePositives').value);
+    
+    if (!modelName || isNaN(threshold) || isNaN(batchSize) || isNaN(maxFalsePositives)) {
+        showNotification('Please fill all required fields with valid values', 'error');
+        return;
+    }
+    
+    // Show progress section, hide results
+    document.getElementById('fixedThresholdProgress').style.display = 'block';
+    document.getElementById('fixedThresholdResults').style.display = 'none';
+    document.getElementById('runFixedThresholdBtn').disabled = true;
+    document.getElementById('runFixedThresholdBtn').innerHTML = '<i class="bi bi-hourglass-split"></i> Running...';
+    
+    const progressBar = document.getElementById('fixedThresholdProgressBar');
+    const logsDiv = document.getElementById('fixedThresholdLogs');
+    
+    // Clear previous logs
+    logsDiv.innerHTML = '';
+    progressBar.style.width = '0%';
+    
+    try {
+        const response = await fetch('/api/fixed-threshold-evaluation', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+                model_name: modelName,
+                threshold: threshold,
+                batch_size: batchSize,
+                max_queries: maxQueries,
+                max_false_positives_per_query: maxFalsePositives
+            })
+        });
+        
+        if (!response.ok) {
+            throw new Error(`HTTP error! status: ${response.status}`);
+        }
+        
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            
+            const chunk = decoder.decode(value);
+            const lines = chunk.split('\n');
+            
+            for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                    try {
+                        const data = JSON.parse(line.slice(6));
+                        handleFixedThresholdMessage(data, progressBar, logsDiv);
+                    } catch (e) {
+                        console.error('Error parsing message:', e, line);
+                    }
+                }
+            }
+        }
+        
+    } catch (error) {
+        console.error('Error:', error);
+        showNotification(`Analysis failed: ${error.message}`, 'error');
+        logsDiv.innerHTML += `<div class="text-danger">Error: ${error.message}</div>`;
+    } finally {
+        document.getElementById('runFixedThresholdBtn').disabled = false;
+        document.getElementById('runFixedThresholdBtn').innerHTML = '<i class="bi bi-play-circle"></i> Start Analysis';
+    }
+}
+
+function handleFixedThresholdMessage(data, progressBar, logsDiv) {
+    if (data.type === 'progress') {
+        progressBar.style.width = `${data.progress}%`;
+        const logEntry = `<div class="text-info">[${new Date().toLocaleTimeString()}] ${data.message}</div>`;
+        logsDiv.innerHTML += logEntry;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+    } else if (data.type === 'log') {
+        const logClass = data.level === 'error' ? 'text-danger' : 
+                        data.level === 'warning' ? 'text-warning' : 
+                        data.level === 'debug' ? 'text-muted' : 'text-success';
+        const logEntry = `<div class="${logClass}">[${new Date().toLocaleTimeString()}] ${data.message}</div>`;
+        logsDiv.innerHTML += logEntry;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+    } else if (data.type === 'error') {
+        const logEntry = `<div class="text-danger">[${new Date().toLocaleTimeString()}] ERROR: ${data.message}</div>`;
+        logsDiv.innerHTML += logEntry;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        showNotification(`Analysis failed: ${data.message}`, 'error');
+    } else if (data.type === 'complete') {
+        progressBar.style.width = '100%';
+        const logEntry = `<div class="text-success">[${new Date().toLocaleTimeString()}] Analysis completed successfully!</div>`;
+        logsDiv.innerHTML += logEntry;
+        logsDiv.scrollTop = logsDiv.scrollHeight;
+        
+        // Display results
+        displayFixedThresholdResults(data.results);
+        showNotification('Analysis completed successfully!', 'success');
+    }
+}
+
+function displayFixedThresholdResults(results) {
+    // Hide progress, show results
+    document.getElementById('fixedThresholdProgress').style.display = 'none';
+    document.getElementById('fixedThresholdResults').style.display = 'block';
+    
+    // Update metric cards
+    document.getElementById('resultPrecision').textContent = results.overall_metrics.precision.toFixed(3);
+    document.getElementById('resultRecall').textContent = results.overall_metrics.recall.toFixed(3);
+    document.getElementById('resultF1').textContent = results.overall_metrics.f1.toFixed(3);
+    document.getElementById('resultAccuracy').textContent = results.overall_metrics.accuracy.toFixed(3);
+    
+    // Populate query details table
+    const tableBody = document.getElementById('queryDetailsTableBody');
+    tableBody.innerHTML = '';
+    
+    results.query_details.forEach((query, index) => {
+        const row = document.createElement('tr');
+        row.innerHTML = `
+            <td><code>${query.query_id}</code></td>
+            <td title="${query.query_text}">${query.query_text.substring(0, 50)}${query.query_text.length > 50 ? '...' : ''}</td>
+            <td>${query.metrics.precision.toFixed(3)}</td>
+            <td>${query.metrics.recall.toFixed(3)}</td>
+            <td>${query.metrics.f1.toFixed(3)}</td>
+            <td class="text-success">${query.metrics.true_positives_count}</td>
+            <td class="text-danger">${query.metrics.false_positives_count}</td>
+            <td class="text-warning">${query.metrics.false_negatives_count}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-primary" onclick="showQueryDetails(${index})">
+                    <i class="bi bi-eye"></i> View
+                </button>
+            </td>
+        `;
+        tableBody.appendChild(row);
+    });
+    
+    // Store results globally for modal access
+    window.fixedThresholdResults = results;
+}
+
+function showQueryDetails(queryIndex) {
+    if (!window.fixedThresholdResults) return;
+    
+    const query = window.fixedThresholdResults.query_details[queryIndex];
+    
+    // Update modal content
+    document.getElementById('modalQueryText').textContent = query.query_text;
+    
+    // True Positives
+    const tpContainer = document.getElementById('modalTruePositives');
+    tpContainer.innerHTML = query.true_positives.map(doc => `
+        <div class="card mb-2">
+            <div class="card-body p-2">
+                <div class="d-flex justify-content-between align-items-start mb-1">
+                    <small class="text-muted">Score: ${doc.score.toFixed(3)}</small>
+                    <span class="badge bg-success">Relevance: ${doc.relevance}</span>
+                </div>
+                <p class="mb-0 small">${doc.text}...</p>
+                <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+            </div>
+        </div>
+    `).join('');
+    
+    // False Positives
+    const fpContainer = document.getElementById('modalFalsePositives');
+    fpContainer.innerHTML = query.false_positives.map(doc => `
+        <div class="card mb-2">
+            <div class="card-body p-2">
+                <div class="d-flex justify-content-between align-items-start mb-1">
+                    <small class="text-muted">Score: ${doc.score.toFixed(3)}</small>
+                    <span class="badge bg-danger">False Match</span>
+                </div>
+                <p class="mb-0 small">${doc.text}...</p>
+                <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+            </div>
+        </div>
+    `).join('');
+    
+    // False Negatives
+    const fnContainer = document.getElementById('modalFalseNegatives');
+    fnContainer.innerHTML = query.false_negatives.map(doc => `
+        <div class="card mb-2">
+            <div class="card-body p-2">
+                <div class="d-flex justify-content-between align-items-start mb-1">
+                    <small class="text-muted">Score: ${doc.score.toFixed(3)}</small>
+                    <span class="badge bg-warning">Relevance: ${doc.relevance}</span>
+                </div>
+                <p class="mb-0 small">${doc.text}...</p>
+                <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+            </div>
+        </div>
+    `).join('');
+    
+    // Show modal
+    const modal = new bootstrap.Modal(document.getElementById('queryDetailModal'));
+    modal.show();
 }

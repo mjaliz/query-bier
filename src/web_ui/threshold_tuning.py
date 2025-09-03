@@ -593,6 +593,316 @@ def evaluate_thresholds(
     }
 
 
+def evaluate_fixed_threshold_with_details(
+    model_name: str,
+    data_path: Path,
+    threshold: float,
+    batch_size: int = 32,
+    max_queries: Optional[int] = None,
+    max_false_positives_per_query: int = 10,
+    progress_callback=None,
+) -> Dict:
+    """
+    Evaluate model at a fixed threshold with detailed analysis including false positives
+    
+    Args:
+        model_name: Name of the embedding model
+        data_path: Path to BEIR dataset
+        threshold: Fixed threshold to evaluate
+        batch_size: Batch size for encoding
+        max_queries: Maximum number of queries to process
+        max_false_positives_per_query: Maximum number of false positives to return per query
+        progress_callback: Optional callback for progress updates
+    """
+    
+    # Check for GPU availability (CUDA or MPS)
+    import torch
+    
+    if torch.cuda.is_available():
+        device = 'cuda'
+        gpu_name = torch.cuda.get_device_name(0)
+        device_msg = f"🚀 CUDA available! Using GPU: {gpu_name}"
+    elif torch.backends.mps.is_available():
+        device = 'mps'
+        device_msg = "🚀 MPS (Metal) available! Using Apple Silicon GPU"
+    else:
+        device = 'cpu'
+        device_msg = "⚠️ No GPU available, using CPU (this will be slower)"
+    
+    if progress_callback:
+        level = "info" if device != 'cpu' else "warning"
+        progress_callback(
+            {"type": "log", "level": level, "message": device_msg}
+        )
+    
+    # Load model
+    if progress_callback:
+        progress_callback(
+            {"type": "log", "level": "info", "message": f"Loading model: {model_name}"}
+        )
+    
+    # SentenceTransformers doesn't support MPS yet, fall back to CPU for MPS
+    if device == 'mps':
+        model_device = 'cpu'
+        if progress_callback:
+            progress_callback(
+                {"type": "log", "level": "info", 
+                 "message": "Note: SentenceTransformers doesn't support MPS yet, using CPU"}
+            )
+    else:
+        model_device = device
+    
+    try:
+        model = SentenceTransformer(model_name, device=model_device)
+        if progress_callback:
+            progress_callback(
+                {"type": "log", "level": "info", 
+                 "message": f"✓ Model loaded successfully on {model_device.upper()}"}
+            )
+    except Exception as e:
+        error_msg = f"Failed to load model {model_name}: {str(e)}"
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
+
+    # Load data
+    if progress_callback:
+        progress_callback(
+            {"type": "log", "level": "info", "message": "Loading BEIR data..."}
+        )
+    
+    try:
+        corpus, queries, qrels = load_beir_data(data_path)
+        if progress_callback:
+            progress_callback(
+                {"type": "log", "level": "info", 
+                 "message": f"Loaded {len(corpus)} documents, {len(queries)} queries, {len(qrels)} qrels"}
+            )
+    except Exception as e:
+        error_msg = f"Failed to load BEIR data from {data_path}: {str(e)}"
+        if progress_callback:
+            progress_callback({"type": "error", "message": error_msg})
+        raise Exception(error_msg)
+    
+    # Pre-compute corpus embeddings
+    if progress_callback:
+        progress_callback({
+            "type": "log", 
+            "level": "info",
+            "message": f"Pre-computing embeddings for {len(corpus)} corpus documents..."
+        })
+    
+    corpus_ids = list(corpus.keys())
+    corpus_texts = [corpus[doc_id] for doc_id in corpus_ids]
+    
+    # Use larger batch size for GPU if available
+    effective_batch_size = batch_size * 4 if model_device == 'cuda' else batch_size
+    
+    # Compute all corpus embeddings once
+    corpus_embeddings = model.encode(
+        corpus_texts,
+        batch_size=effective_batch_size,
+        convert_to_numpy=True,
+        show_progress_bar=progress_callback is not None,
+    )
+    
+    # Normalize embeddings for cosine similarity
+    corpus_embeddings = corpus_embeddings / np.linalg.norm(
+        corpus_embeddings, axis=1, keepdims=True
+    )
+    
+    # Store in dictionary for fast lookup
+    corpus_embeddings_dict = {}
+    for doc_id, embedding in zip(corpus_ids, corpus_embeddings):
+        corpus_embeddings_dict[doc_id] = embedding
+    
+    if progress_callback:
+        progress_callback({
+            "type": "log",
+            "level": "info", 
+            "message": f"✓ Pre-computed {len(corpus)} corpus embeddings"
+        })
+    
+    # Process queries
+    qrels_items = list(qrels.items())
+    if max_queries and max_queries < len(qrels_items):
+        qrels_items = qrels_items[:max_queries]
+    
+    total_queries = len(qrels_items)
+    
+    if progress_callback:
+        progress_callback({"type": "log", "level": "info", 
+                         "message": f"Processing {total_queries} queries at threshold {threshold:.3f}"})
+    
+    # Detailed results storage
+    query_details = []
+    overall_metrics = {
+        "true_positives": 0,
+        "false_positives": 0,
+        "false_negatives": 0,
+        "true_negatives": 0,
+    }
+    
+    start_time = time.time()
+    
+    for idx, (query_id, relevant_docs) in enumerate(qrels_items):
+        if query_id not in queries:
+            continue
+        
+        query_text = queries[query_id]
+        
+        # Compute query embedding
+        query_embedding = model.encode(
+            [query_text], 
+            convert_to_numpy=True,
+            show_progress_bar=False
+        )
+        
+        # Normalize query embedding
+        query_embedding = query_embedding / np.linalg.norm(
+            query_embedding, axis=1, keepdims=True
+        )
+        
+        # Compute similarities with all corpus documents
+        doc_embeddings = np.array([corpus_embeddings_dict[doc_id] for doc_id in corpus_ids])
+        sims = np.dot(doc_embeddings, query_embedding.T).flatten()
+        
+        # Create similarity dictionary
+        doc_similarities = {doc_id: float(sim) for doc_id, sim in zip(corpus_ids, sims)}
+        
+        # Analyze results at the threshold
+        true_positives = []
+        false_positives = []
+        false_negatives = []
+        
+        for doc_id, sim_score in doc_similarities.items():
+            is_relevant = doc_id in relevant_docs
+            is_above_threshold = sim_score >= threshold
+            
+            if is_relevant and is_above_threshold:
+                true_positives.append({
+                    "doc_id": doc_id,
+                    "score": sim_score,
+                    "text": corpus[doc_id][:200],  # First 200 chars
+                    "relevance": relevant_docs[doc_id]
+                })
+                overall_metrics["true_positives"] += 1
+            elif is_relevant and not is_above_threshold:
+                false_negatives.append({
+                    "doc_id": doc_id,
+                    "score": sim_score,
+                    "text": corpus[doc_id][:200],
+                    "relevance": relevant_docs[doc_id]
+                })
+                overall_metrics["false_negatives"] += 1
+            elif not is_relevant and is_above_threshold:
+                false_positives.append({
+                    "doc_id": doc_id,
+                    "score": sim_score,
+                    "text": corpus[doc_id][:200]
+                })
+                overall_metrics["false_positives"] += 1
+            else:
+                overall_metrics["true_negatives"] += 1
+        
+        # Sort false positives by score (highest first) and limit
+        false_positives.sort(key=lambda x: x["score"], reverse=True)
+        false_positives = false_positives[:max_false_positives_per_query]
+        
+        # Calculate per-query metrics
+        query_tp = len(true_positives)
+        query_fp = len([1 for doc_id, sim in doc_similarities.items() 
+                        if doc_id not in relevant_docs and sim >= threshold])
+        query_fn = len(false_negatives)
+        
+        query_precision = query_tp / (query_tp + query_fp) if (query_tp + query_fp) > 0 else 0
+        query_recall = query_tp / (query_tp + query_fn) if (query_tp + query_fn) > 0 else 0
+        query_f1 = 2 * (query_precision * query_recall) / (query_precision + query_recall) if (query_precision + query_recall) > 0 else 0
+        
+        query_details.append({
+            "query_id": query_id,
+            "query_text": query_text,
+            "metrics": {
+                "precision": query_precision,
+                "recall": query_recall,
+                "f1": query_f1,
+                "true_positives_count": query_tp,
+                "false_positives_count": query_fp,
+                "false_negatives_count": query_fn
+            },
+            "true_positives": true_positives,
+            "false_positives": false_positives,  # Limited to max_false_positives_per_query
+            "false_negatives": false_negatives
+        })
+        
+        # Progress update
+        if progress_callback and (idx % 10 == 0 or idx == total_queries - 1):
+            progress = int((idx + 1) / total_queries * 100)
+            progress_callback({
+                "type": "progress",
+                "progress": progress,
+                "message": f"Processing query {idx + 1}/{total_queries}"
+            })
+    
+    # Calculate overall metrics
+    overall_precision = (
+        overall_metrics["true_positives"] / 
+        (overall_metrics["true_positives"] + overall_metrics["false_positives"])
+        if (overall_metrics["true_positives"] + overall_metrics["false_positives"]) > 0
+        else 0
+    )
+    overall_recall = (
+        overall_metrics["true_positives"] / 
+        (overall_metrics["true_positives"] + overall_metrics["false_negatives"])
+        if (overall_metrics["true_positives"] + overall_metrics["false_negatives"]) > 0
+        else 0
+    )
+    overall_f1 = (
+        2 * (overall_precision * overall_recall) / (overall_precision + overall_recall)
+        if (overall_precision + overall_recall) > 0
+        else 0
+    )
+    
+    # Calculate average metrics
+    if query_details:
+        avg_precision = np.mean([q["metrics"]["precision"] for q in query_details])
+        avg_recall = np.mean([q["metrics"]["recall"] for q in query_details])
+        avg_f1 = np.mean([q["metrics"]["f1"] for q in query_details])
+    else:
+        avg_precision = avg_recall = avg_f1 = 0
+    
+    encoding_time = time.time() - start_time
+    
+    if progress_callback:
+        progress_callback({
+            "type": "log",
+            "level": "info",
+            "message": f"✓ Evaluation complete in {encoding_time:.1f}s"
+        })
+    
+    return {
+        "model_name": model_name,
+        "threshold": threshold,
+        "overall_metrics": {
+            "precision": float(avg_precision),
+            "recall": float(avg_recall),
+            "f1": float(avg_f1),
+            "accuracy": float(
+                (overall_metrics["true_positives"] + overall_metrics["true_negatives"]) /
+                sum(overall_metrics.values()) if sum(overall_metrics.values()) > 0 else 0
+            ),
+            "true_positives": overall_metrics["true_positives"],
+            "false_positives": overall_metrics["false_positives"],
+            "false_negatives": overall_metrics["false_negatives"],
+            "true_negatives": overall_metrics["true_negatives"],
+        },
+        "queries_evaluated": len(query_details),
+        "corpus_size": len(corpus),
+        "query_details": query_details,
+        "evaluation_time": encoding_time
+    }
+
+
 def main():
     """Main function for CLI usage"""
     import argparse

@@ -198,6 +198,12 @@
                             </button>
                         </li>
                         <li class="nav-item" role="presentation">
+                            <button class="nav-link" id="fixed-threshold-tab" data-bs-toggle="tab" data-bs-target="#fixed-threshold"
+                                type="button">
+                                <i class="bi bi-search"></i> Fixed Threshold Analysis
+                            </button>
+                        </li>
+                        <li class="nav-item" role="presentation">
                             <button class="nav-link" id="jobs-tab" data-bs-toggle="tab" data-bs-target="#jobs"
                                 type="button">
                                 <i class="bi bi-list-task"></i> Jobs
@@ -445,6 +451,165 @@
                                                         <!-- Results will be populated here -->
                                                     </tbody>
                                                 </table>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="tab-pane fade" id="fixed-threshold" role="tabpanel">
+                            <div class="row">
+                                <div class="col-md-4">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title"><i class="bi bi-search"></i> Fixed Threshold Analysis</h5>
+                                            <form id="fixedThresholdForm">
+                                                <div class="mb-3">
+                                                    <label for="fixedThresholdModel" class="form-label">Model Name</label>
+                                                    <input type="text" class="form-control" id="fixedThresholdModel" 
+                                                           placeholder="e.g., sentence-transformers/all-MiniLM-L6-v2" required>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="fixedThresholdValue" class="form-label">Threshold</label>
+                                                    <input type="number" class="form-control" id="fixedThresholdValue" 
+                                                           min="0" max="1" step="0.01" value="0.5" required>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="fixedThresholdBatchSize" class="form-label">Batch Size</label>
+                                                    <input type="number" class="form-control" id="fixedThresholdBatchSize" 
+                                                           min="1" max="512" value="32" required>
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="fixedThresholdMaxQueries" class="form-label">Max Queries (optional)</label>
+                                                    <input type="number" class="form-control" id="fixedThresholdMaxQueries" 
+                                                           min="1" max="10000" placeholder="Leave empty to process all">
+                                                </div>
+                                                <div class="mb-3">
+                                                    <label for="maxFalsePositives" class="form-label">Max False Positives per Query</label>
+                                                    <input type="number" class="form-control" id="maxFalsePositives" 
+                                                           min="1" max="100" value="10">
+                                                </div>
+                                                <button type="submit" class="btn btn-primary w-100" id="runFixedThresholdBtn">
+                                                    <i class="bi bi-play-circle"></i> Start Analysis
+                                                </button>
+                                            </form>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="col-md-8">
+                                    <div class="card">
+                                        <div class="card-body">
+                                            <h5 class="card-title">Analysis Results</h5>
+                                            <!-- Progress section -->
+                                            <div id="fixedThresholdProgress" style="display: none;">
+                                                <div class="mb-3">
+                                                    <div class="progress">
+                                                        <div class="progress-bar progress-bar-striped progress-bar-animated" 
+                                                             id="fixedThresholdProgressBar" style="width: 0%"></div>
+                                                    </div>
+                                                </div>
+                                                <div id="fixedThresholdLogs" class="border rounded p-3" style="height: 200px; overflow-y: auto; font-family: monospace; font-size: 0.8rem;">
+                                                </div>
+                                            </div>
+                                            
+                                            <!-- Results section -->
+                                            <div id="fixedThresholdResults" style="display: none;">
+                                                <div class="row mb-3">
+                                                    <div class="col-md-3">
+                                                        <div class="card bg-primary text-white text-center">
+                                                            <div class="card-body">
+                                                                <h4 id="resultPrecision">-</h4>
+                                                                <small>Precision</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="card bg-success text-white text-center">
+                                                            <div class="card-body">
+                                                                <h4 id="resultRecall">-</h4>
+                                                                <small>Recall</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="card bg-info text-white text-center">
+                                                            <div class="card-body">
+                                                                <h4 id="resultF1">-</h4>
+                                                                <small>F1 Score</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                    <div class="col-md-3">
+                                                        <div class="card bg-warning text-white text-center">
+                                                            <div class="card-body">
+                                                                <h4 id="resultAccuracy">-</h4>
+                                                                <small>Accuracy</small>
+                                                            </div>
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- Query details table -->
+                                                <div class="mb-3">
+                                                    <h6>Query Analysis</h6>
+                                                    <div class="table-responsive" style="max-height: 400px; overflow-y: auto;">
+                                                        <table class="table table-sm table-striped" id="queryDetailsTable">
+                                                            <thead class="table-dark">
+                                                                <tr>
+                                                                    <th>Query ID</th>
+                                                                    <th>Query Text</th>
+                                                                    <th>Precision</th>
+                                                                    <th>Recall</th>
+                                                                    <th>F1</th>
+                                                                    <th>TP</th>
+                                                                    <th>FP</th>
+                                                                    <th>FN</th>
+                                                                    <th>Actions</th>
+                                                                </tr>
+                                                            </thead>
+                                                            <tbody id="queryDetailsTableBody">
+                                                            </tbody>
+                                                        </table>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Modal for query details -->
+                            <div class="modal fade" id="queryDetailModal" tabindex="-1">
+                                <div class="modal-dialog modal-xl">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Query Details</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="row">
+                                                <div class="col-md-12">
+                                                    <h6>Query Text:</h6>
+                                                    <p id="modalQueryText" class="border rounded p-2 bg-light"></p>
+                                                </div>
+                                            </div>
+                                            
+                                            <div class="row">
+                                                <div class="col-md-4">
+                                                    <h6 class="text-success">True Positives (Correct Matches)</h6>
+                                                    <div id="modalTruePositives" style="max-height: 300px; overflow-y: auto;">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <h6 class="text-danger">False Positives (Incorrect Matches)</h6>
+                                                    <div id="modalFalsePositives" style="max-height: 300px; overflow-y: auto;">
+                                                    </div>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <h6 class="text-warning">False Negatives (Missed Matches)</h6>
+                                                    <div id="modalFalseNegatives" style="max-height: 300px; overflow-y: auto;">
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>

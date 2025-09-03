@@ -109,6 +109,14 @@ class ThresholdTuningRequest(BaseModel):
     max_queries: Optional[int] = None  # None means process all queries
 
 
+class FixedThresholdRequest(BaseModel):
+    model_name: str
+    threshold: float
+    batch_size: int = 32
+    max_queries: Optional[int] = None
+    max_false_positives_per_query: int = 10
+
+
 async def run_evaluation_process(request: EvaluationRequest):
     """Run the evaluation in a subprocess and stream the output"""
     script_path = WEB_UI_DIR / "evaluate_model.py"
@@ -395,6 +403,79 @@ async def cleanup_old_jobs():
     """Clean up old completed jobs (7+ days old)"""
     count = job_manager.cleanup_old_jobs()
     return {"message": f"Cleaned up {count} old jobs"}
+
+
+@app.post("/api/fixed-threshold-evaluation")
+async def fixed_threshold_evaluation(request: FixedThresholdRequest):
+    """Evaluate at a fixed threshold with detailed false positive analysis"""
+    from threshold_tuning import evaluate_fixed_threshold_with_details
+    import threading
+    import queue
+    
+    try:
+        # Data path for SciFact dataset
+        data_path = Path(__file__).parent.parent.parent / "scifact"
+        
+        # Create a queue for progress messages
+        progress_queue = queue.Queue()
+        result_container = {'result': None, 'error': None}
+        
+        def progress_callback(msg):
+            """Callback for progress updates"""
+            progress_queue.put(msg)
+        
+        async def stream_response():
+            """Generator function to stream progress updates"""
+            # Run evaluation in a separate thread
+            def run_evaluation():
+                try:
+                    result = evaluate_fixed_threshold_with_details(
+                        request.model_name,
+                        data_path,
+                        request.threshold,
+                        request.batch_size,
+                        request.max_queries,
+                        request.max_false_positives_per_query,
+                        progress_callback,
+                    )
+                    result_container['result'] = result
+                except Exception as e:
+                    result_container['error'] = e
+                    progress_queue.put({'type': 'error', 'message': str(e)})
+            
+            # Start evaluation in a thread
+            eval_thread = threading.Thread(target=run_evaluation)
+            eval_thread.start()
+            
+            # Stream progress messages while evaluation runs
+            while eval_thread.is_alive():
+                try:
+                    # Get messages from queue with timeout
+                    while True:
+                        msg = progress_queue.get(timeout=0.1)
+                        yield f"data: {json.dumps(msg)}\n\n"
+                except queue.Empty:
+                    # No messages, wait a bit and check if thread is still running
+                    await asyncio.sleep(0.1)
+            
+            # Thread finished, get any remaining messages
+            while not progress_queue.empty():
+                msg = progress_queue.get()
+                yield f"data: {json.dumps(msg)}\n\n"
+            
+            # Check for error or send results
+            if result_container['error']:
+                raise result_container['error']
+            
+            if result_container['result']:
+                yield f"data: {json.dumps({'type': 'complete', 'results': result_container['result']})}\n\n"
+        
+        return StreamingResponse(stream_response(), media_type="text/event-stream")
+        
+    except Exception as e:
+        import traceback
+        error_detail = traceback.format_exc()
+        raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}\n{error_detail}")
 
 
 if __name__ == "__main__":
