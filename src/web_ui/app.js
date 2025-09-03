@@ -1227,16 +1227,25 @@ async function cleanupOldJobs() {
 
 // Setup fixed threshold analysis form
 function setupFixedThresholdForm() {
+    console.log('Setting up fixed threshold form...'); // Debug log
     const button = document.getElementById('runFixedThresholdBtn');
-    if (!button) return;
+    if (!button) {
+        console.log('Fixed threshold button not found!'); // Debug log
+        return;
+    }
     
     button.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
         console.log('Fixed threshold button clicked'); // Debug log
-        await runFixedThresholdAnalysis();
+        try {
+            await runFixedThresholdAnalysis();
+        } catch (error) {
+            console.error('Error in runFixedThresholdAnalysis:', error);
+        }
         return false;
     });
+    console.log('Fixed threshold form setup complete'); // Debug log
 }
 
 // Run fixed threshold analysis
@@ -1349,6 +1358,9 @@ function handleFixedThresholdMessage(data, progressBar, logsDiv) {
 }
 
 function displayFixedThresholdResults(results) {
+    console.log('Received results:', results); // Debug log
+    console.log('Query details:', results.query_details); // Debug log
+    
     // Hide progress, show results
     document.getElementById('fixedThresholdProgress').style.display = 'none';
     document.getElementById('fixedThresholdResults').style.display = 'block';
@@ -1428,6 +1440,10 @@ function showQueryDetails(queryIndex) {
     
     // False Positives
     const fpContainer = document.getElementById('modalFalsePositives');
+    console.log(`Rendering ${query.false_positives.length} false positives for query`); // Debug log
+    if (query.false_positives.length > 0) {
+        console.log('First false positive:', query.false_positives[0]); // Debug log
+    }
     fpContainer.innerHTML = query.false_positives.map((doc, index) => `
         <div class="card mb-2 border-danger">
             <div class="card-body p-3">
@@ -1472,9 +1488,12 @@ function showQueryDetails(queryIndex) {
 }
 
 function setupFalsePositivesExplorer(results) {
+    console.log('Setting up false positives explorer...'); // Debug log
+    
     // Collect all false positives across queries
     let allFalsePositives = [];
     results.query_details.forEach((query, queryIndex) => {
+        console.log(`Query ${query.query_id}: ${query.false_positives.length} false positives`); // Debug log
         query.false_positives.forEach(fp => {
             allFalsePositives.push({
                 ...fp,
@@ -1484,6 +1503,8 @@ function setupFalsePositivesExplorer(results) {
             });
         });
     });
+    
+    console.log(`Total false positives collected: ${allFalsePositives.length}`); // Debug log
     
     // Show toggle button if we have false positives
     if (allFalsePositives.length > 0) {
