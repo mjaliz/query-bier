@@ -1232,8 +1232,21 @@ function setupFixedThresholdForm() {
     
     form.addEventListener('submit', async (e) => {
         e.preventDefault();
+        e.stopPropagation();
         await runFixedThresholdAnalysis();
+        return false;
     });
+    
+    // Also handle button click directly to prevent any form submission
+    const button = document.getElementById('runFixedThresholdBtn');
+    if (button) {
+        button.addEventListener('click', async (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            await runFixedThresholdAnalysis();
+            return false;
+        });
+    }
 }
 
 // Run fixed threshold analysis
