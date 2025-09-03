@@ -247,6 +247,47 @@ def evaluate_thresholds(
             progress_callback({"type": "error", "message": error_msg})
         raise Exception(error_msg)
     
+    # Pre-compute corpus embeddings if using full corpus mode
+    corpus_embeddings_dict = {}
+    
+    if not use_filtered_corpus:
+        if progress_callback:
+            progress_callback({
+                "type": "log", 
+                "level": "info",
+                "message": f"Pre-computing embeddings for {len(corpus)} corpus documents..."
+            })
+        
+        corpus_ids = list(corpus.keys())
+        corpus_texts = [corpus[doc_id] for doc_id in corpus_ids]
+        
+        # Use larger batch size for GPU if available
+        effective_batch_size = batch_size * 4 if model_device == 'cuda' else batch_size
+        
+        # Compute all corpus embeddings once
+        corpus_embeddings = model.encode(
+            corpus_texts,
+            batch_size=effective_batch_size,
+            convert_to_numpy=True,
+            show_progress_bar=progress_callback is not None,
+        )
+        
+        # Normalize embeddings for cosine similarity
+        corpus_embeddings = corpus_embeddings / np.linalg.norm(
+            corpus_embeddings, axis=1, keepdims=True
+        )
+        
+        # Store in dictionary for fast lookup
+        for doc_id, embedding in zip(corpus_ids, corpus_embeddings):
+            corpus_embeddings_dict[doc_id] = embedding
+        
+        if progress_callback:
+            progress_callback({
+                "type": "log",
+                "level": "info", 
+                "message": f"✓ Pre-computed {len(corpus)} corpus embeddings"
+            })
+    
     # Calculate similarities for all query-document pairs
     similarities = {}
     total_queries = len(qrels)
@@ -369,30 +410,39 @@ def evaluate_thresholds(
         if not doc_texts:
             continue
 
-        # Compute embeddings
+        # Compute query embedding
         query_embedding = model.encode(
             [query_text], 
             convert_to_numpy=True,
             show_progress_bar=False
         )
         
-        # Use larger batch size for GPU if available
-        effective_batch_size = batch_size * 4 if model_device == 'cuda' else batch_size
-        
-        doc_embeddings = model.encode(
-            doc_texts,
-            batch_size=effective_batch_size,
-            convert_to_numpy=True,
-            show_progress_bar=False,
-        )
-
-        # Calculate cosine similarities
+        # Normalize query embedding
         query_embedding = query_embedding / np.linalg.norm(
             query_embedding, axis=1, keepdims=True
         )
-        doc_embeddings = doc_embeddings / np.linalg.norm(
-            doc_embeddings, axis=1, keepdims=True
-        )
+        
+        # Get or compute document embeddings
+        if use_filtered_corpus:
+            # Compute embeddings only for the selected documents
+            effective_batch_size = batch_size * 4 if model_device == 'cuda' else batch_size
+            
+            doc_embeddings = model.encode(
+                doc_texts,
+                batch_size=effective_batch_size,
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            )
+            
+            # Normalize document embeddings
+            doc_embeddings = doc_embeddings / np.linalg.norm(
+                doc_embeddings, axis=1, keepdims=True
+            )
+        else:
+            # Use pre-computed embeddings
+            doc_embeddings = np.array([corpus_embeddings_dict[doc_id] for doc_id in doc_ids])
+        
+        # Calculate cosine similarities
         sims = np.dot(doc_embeddings, query_embedding.T).flatten()
 
         # Store similarities
