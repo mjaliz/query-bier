@@ -1227,30 +1227,21 @@ async function cleanupOldJobs() {
 
 // Setup fixed threshold analysis form
 function setupFixedThresholdForm() {
-    const form = document.getElementById('fixedThresholdForm');
-    if (!form) return;
+    const button = document.getElementById('runFixedThresholdBtn');
+    if (!button) return;
     
-    form.addEventListener('submit', async (e) => {
+    button.addEventListener('click', async (e) => {
         e.preventDefault();
         e.stopPropagation();
+        console.log('Fixed threshold button clicked'); // Debug log
         await runFixedThresholdAnalysis();
         return false;
     });
-    
-    // Also handle button click directly to prevent any form submission
-    const button = document.getElementById('runFixedThresholdBtn');
-    if (button) {
-        button.addEventListener('click', async (e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            await runFixedThresholdAnalysis();
-            return false;
-        });
-    }
 }
 
 // Run fixed threshold analysis
 async function runFixedThresholdAnalysis() {
+    console.log('runFixedThresholdAnalysis function called'); // Debug log
     const modelName = document.getElementById('fixedThresholdModel').value;
     const threshold = parseFloat(document.getElementById('fixedThresholdValue').value);
     const batchSize = parseInt(document.getElementById('fixedThresholdBatchSize').value);
