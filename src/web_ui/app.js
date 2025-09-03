@@ -1297,22 +1297,46 @@ async function runFixedThresholdAnalysis() {
         
         const reader = response.body.getReader();
         const decoder = new TextDecoder();
+        let buffer = '';
         
         while (true) {
             const { done, value } = await reader.read();
             if (done) break;
             
-            const chunk = decoder.decode(value);
-            const lines = chunk.split('\n');
+            // Accumulate chunks in buffer
+            buffer += decoder.decode(value, { stream: true });
+            
+            // Process complete lines
+            let lines = buffer.split('\n');
+            // Keep the last potentially incomplete line in the buffer
+            buffer = lines.pop() || '';
             
             for (const line of lines) {
                 if (line.startsWith('data: ')) {
-                    try {
-                        const data = JSON.parse(line.slice(6));
-                        handleFixedThresholdMessage(data, progressBar, logsDiv);
-                    } catch (e) {
-                        console.error('Error parsing message:', e, line);
+                    const jsonData = line.slice(6);
+                    if (jsonData.trim()) {
+                        try {
+                            const data = JSON.parse(jsonData);
+                            handleFixedThresholdMessage(data, progressBar, logsDiv);
+                        } catch (e) {
+                            console.error('Error parsing message:', e);
+                            console.error('Problematic JSON:', jsonData);
+                        }
                     }
+                }
+            }
+        }
+        
+        // Process any remaining data in buffer
+        if (buffer.startsWith('data: ')) {
+            const jsonData = buffer.slice(6);
+            if (jsonData.trim()) {
+                try {
+                    const data = JSON.parse(jsonData);
+                    handleFixedThresholdMessage(data, progressBar, logsDiv);
+                } catch (e) {
+                    console.error('Error parsing final message:', e);
+                    console.error('Final JSON:', jsonData);
                 }
             }
         }
@@ -1598,33 +1622,47 @@ function filterFalsePositives() {
     `;
 }
 
-function showDocumentDetails(docId, score, queryText, type, queryIndex, docIndex) {
+async function showDocumentDetails(docId, score, queryText, type, queryIndex, docIndex) {
     // Update document modal
     document.getElementById('docDetailId').textContent = docId;
     document.getElementById('docDetailScore').textContent = score.toFixed(3);
     document.getElementById('docDetailQuery').textContent = queryText;
     
-    // Get full document text from results
-    let fullText = 'Document text not available';
-    if (window.fixedThresholdResults && queryIndex !== undefined && docIndex !== undefined) {
-        const query = window.fixedThresholdResults.query_details[queryIndex];
-        let doc;
-        if (type === 'tp') doc = query.true_positives[docIndex];
-        else if (type === 'fp') doc = query.false_positives[docIndex];
-        else if (type === 'fn') doc = query.false_negatives[docIndex];
-        
-        if (doc) {
-            fullText = doc.text;
-        }
-    }
-    
-    document.getElementById('docDetailText').textContent = fullText;
-    
     // Set badge color based on type
     const badge = document.getElementById('docDetailScore');
     badge.className = `badge ${type === 'tp' ? 'bg-success' : type === 'fp' ? 'bg-danger' : 'bg-warning'}`;
     
+    // Show loading text
+    document.getElementById('docDetailText').textContent = 'Loading full document text...';
+    
     // Show document modal
     const modal = new bootstrap.Modal(document.getElementById('documentDetailModal'));
     modal.show();
+    
+    // Fetch full document text
+    try {
+        const response = await fetch(`/api/document/${docId}`);
+        if (response.ok) {
+            const docData = await response.json();
+            document.getElementById('docDetailText').textContent = docData.text;
+        } else {
+            // Fallback to truncated text from results
+            let fallbackText = 'Full document text not available';
+            if (window.fixedThresholdResults && queryIndex !== undefined && docIndex !== undefined) {
+                const query = window.fixedThresholdResults.query_details[queryIndex];
+                let doc;
+                if (type === 'tp') doc = query.true_positives[docIndex];
+                else if (type === 'fp') doc = query.false_positives[docIndex];
+                else if (type === 'fn') doc = query.false_negatives[docIndex];
+                
+                if (doc) {
+                    fallbackText = doc.text + '... (truncated)';
+                }
+            }
+            document.getElementById('docDetailText').textContent = fallbackText;
+        }
+    } catch (error) {
+        console.error('Error fetching document:', error);
+        document.getElementById('docDetailText').textContent = 'Error loading document text';
+    }
 }

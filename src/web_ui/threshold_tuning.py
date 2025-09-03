@@ -783,7 +783,7 @@ def evaluate_fixed_threshold_with_details(
                 true_positives.append({
                     "doc_id": doc_id,
                     "score": sim_score,
-                    "text": corpus[doc_id][:200],  # First 200 chars
+                    "text": corpus[doc_id][:150],  # First 150 chars
                     "relevance": relevant_docs[doc_id]
                 })
                 overall_metrics["true_positives"] += 1
@@ -791,7 +791,7 @@ def evaluate_fixed_threshold_with_details(
                 false_negatives.append({
                     "doc_id": doc_id,
                     "score": sim_score,
-                    "text": corpus[doc_id][:200],
+                    "text": corpus[doc_id][:150],
                     "relevance": relevant_docs[doc_id]
                 })
                 overall_metrics["false_negatives"] += 1
@@ -799,7 +799,7 @@ def evaluate_fixed_threshold_with_details(
                 false_positives.append({
                     "doc_id": doc_id,
                     "score": sim_score,
-                    "text": corpus[doc_id][:200]
+                    "text": corpus[doc_id][:150]
                 })
                 overall_metrics["false_positives"] += 1
             else:

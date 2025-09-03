@@ -498,6 +498,36 @@ async def fixed_threshold_evaluation(request: FixedThresholdRequest):
         )
 
 
+@app.get("/api/document/{doc_id}")
+async def get_document_text(doc_id: str):
+    """Get full document text by document ID"""
+    try:
+        # Data path
+        data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
+        
+        # Load corpus
+        corpus_path = data_path / "corpus.jsonl"
+        if not corpus_path.exists():
+            raise HTTPException(status_code=404, detail="Corpus file not found")
+        
+        # Find document
+        with open(corpus_path, "r") as f:
+            for line in f:
+                doc = json.loads(line)
+                if doc["_id"] == doc_id:
+                    return {
+                        "doc_id": doc_id,
+                        "text": doc.get("title", "") + " " + doc.get("text", ""),
+                        "title": doc.get("title", ""),
+                        "body": doc.get("text", "")
+                    }
+        
+        raise HTTPException(status_code=404, detail="Document not found")
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 if __name__ == "__main__":
     print(f"Starting FastAPI server...")
     print(f"Results directory: {RESULTS_DIR}")
