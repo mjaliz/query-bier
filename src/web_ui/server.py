@@ -194,29 +194,29 @@ def run_threshold_tuning_background(job_id: str, request: ThresholdTuningRequest
     try:
         # Default thresholds if not specified
         thresholds = request.thresholds or [i / 10 for i in range(1, 10)]
-        
+
         # Use the data path
         data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
-        
+
         # Check if data exists
         if not data_path.exists():
             raise Exception(f"Data path not found: {data_path}")
-        
+
         # Import threshold tuning module
         sys.path.insert(0, str(WEB_UI_DIR))
         from threshold_tuning import evaluate_thresholds
-        
+
         def progress_callback(data):
             # Update job with progress info
-            progress = data.get('progress', 0)
-            message = data.get('message', '')
+            progress = data.get("progress", 0)
+            message = data.get("message", "")
             job_manager.update_job_status(job_id, JobStatus.RUNNING, progress, message)
-            
+
             # Check if job was cancelled
             job = job_manager.get_job(job_id)
             if job and job.status == JobStatus.CANCELLED:
                 raise Exception("Job was cancelled")
-        
+
         # Run evaluation
         results = evaluate_thresholds(
             request.model_name,
@@ -227,15 +227,18 @@ def run_threshold_tuning_background(job_id: str, request: ThresholdTuningRequest
             progress_callback,
             request.max_queries,  # Pass None if not specified to process all queries
         )
-        
+
         # Save results
         job_manager.set_job_result(job_id, results)
-        job_manager.update_job_status(job_id, JobStatus.COMPLETED, 100, 
-                                    f"✓ Evaluation complete! Best threshold: {results['best_threshold']:.3f}")
-        
+        job_manager.update_job_status(
+            job_id,
+            JobStatus.COMPLETED,
+            100,
+            f"✓ Evaluation complete! Best threshold: {results['best_threshold']:.3f}",
+        )
+
     except Exception as e:
-        job_manager.update_job_status(job_id, JobStatus.FAILED, 
-                                    error_message=str(e))
+        job_manager.update_job_status(job_id, JobStatus.FAILED, error_message=str(e))
 
 
 async def run_threshold_tuning_process(request: ThresholdTuningRequest):
@@ -248,9 +251,13 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
 
     try:
         yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Starting threshold tuning for {request.model_name}'})}\n\n"
-        
+
         # Log the mode being used
-        mode_msg = "Filtered Corpus Mode (qrels + negative samples)" if request.use_filtered_corpus else "Full Corpus Mode (all documents)"
+        mode_msg = (
+            "Filtered Corpus Mode (qrels + negative samples)"
+            if request.use_filtered_corpus
+            else "Full Corpus Mode (all documents)"
+        )
         yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Using {mode_msg}'})}\n\n"
         yield f"data: {json.dumps({'type': 'log', 'level': 'info', 'message': f'Max queries to process: {request.max_queries or 100}'})}\n\n"
 
@@ -264,14 +271,14 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
         # Import here to ensure proper module loading
         sys.path.insert(0, str(WEB_UI_DIR))
         from threshold_tuning import evaluate_thresholds
-        
+
         # Create a queue for real-time progress updates
         progress_queue = queue.Queue()
-        result_container = {'result': None, 'error': None}
-        
+        result_container = {"result": None, "error": None}
+
         def progress_callback(data):
             progress_queue.put(data)
-        
+
         def run_evaluation():
             try:
                 result = evaluate_thresholds(
@@ -283,15 +290,15 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
                     progress_callback,
                     request.max_queries or 100,
                 )
-                result_container['result'] = result
+                result_container["result"] = result
             except Exception as e:
-                result_container['error'] = e
-                progress_queue.put({'type': 'error', 'message': str(e)})
-        
+                result_container["error"] = e
+                progress_queue.put({"type": "error", "message": str(e)})
+
         # Start evaluation in a thread
         eval_thread = threading.Thread(target=run_evaluation)
         eval_thread.start()
-        
+
         # Stream progress messages while evaluation runs
         while eval_thread.is_alive():
             try:
@@ -302,17 +309,17 @@ async def run_threshold_tuning_process(request: ThresholdTuningRequest):
             except queue.Empty:
                 # No messages, wait a bit and check if thread is still running
                 await asyncio.sleep(0.1)
-        
+
         # Thread finished, get any remaining messages
         while not progress_queue.empty():
             msg = progress_queue.get()
             yield f"data: {json.dumps(msg)}\n\n"
-        
+
         # Check for error or send results
-        if result_container['error']:
-            raise result_container['error']
-        
-        if result_container['result']:
+        if result_container["error"]:
+            raise result_container["error"]
+
+        if result_container["result"]:
             yield f"data: {json.dumps({'type': 'complete', 'results': result_container['result']})}\n\n"
 
     except Exception as e:
@@ -328,15 +335,20 @@ async def start_threshold_tuning(request: ThresholdTuningRequest):
     try:
         # Create background job
         job_id = job_manager.create_job(
-            task_type="threshold_tuning",
-            request_params=request.model_dump()
+            task_type="threshold_tuning", request_params=request.model_dump()
         )
-        
+
         # Start background task
-        job_manager.start_background_task(job_id, run_threshold_tuning_background, request)
-        
-        return {"job_id": job_id, "status": "started", "message": "Threshold tuning job started"}
-        
+        job_manager.start_background_task(
+            job_id, run_threshold_tuning_background, request
+        )
+
+        return {
+            "job_id": job_id,
+            "status": "started",
+            "message": "Threshold tuning job started",
+        }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -368,7 +380,7 @@ async def get_job_status(job_id: str):
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     return job.to_dict()
 
 
@@ -378,14 +390,16 @@ async def get_job_result(job_id: str):
     job = job_manager.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    
+
     if job.status != JobStatus.COMPLETED:
-        raise HTTPException(status_code=400, detail=f"Job not completed (status: {job.status})")
-    
+        raise HTTPException(
+            status_code=400, detail=f"Job not completed (status: {job.status})"
+        )
+
     result = job_manager.get_job_result(job_id)
     if not result:
         raise HTTPException(status_code=404, detail="Job result not found")
-    
+
     return result
 
 
@@ -393,8 +407,10 @@ async def get_job_result(job_id: str):
 async def cancel_job(job_id: str):
     """Cancel a running job"""
     if not job_manager.cancel_job(job_id):
-        raise HTTPException(status_code=404, detail="Job not found or cannot be cancelled")
-    
+        raise HTTPException(
+            status_code=404, detail="Job not found or cannot be cancelled"
+        )
+
     return {"message": "Job cancelled successfully"}
 
 
@@ -411,21 +427,22 @@ async def fixed_threshold_evaluation(request: FixedThresholdRequest):
     from threshold_tuning import evaluate_fixed_threshold_with_details
     import threading
     import queue
-    
+
     try:
         # Data path for SciFact dataset
-        data_path = Path(__file__).parent.parent.parent / "scifact"
-        
+        data_path = Path(__file__).parent.parent.parent / "data" / "beir_data"
+
         # Create a queue for progress messages
         progress_queue = queue.Queue()
-        result_container = {'result': None, 'error': None}
-        
+        result_container = {"result": None, "error": None}
+
         def progress_callback(msg):
             """Callback for progress updates"""
             progress_queue.put(msg)
-        
+
         async def stream_response():
             """Generator function to stream progress updates"""
+
             # Run evaluation in a separate thread
             def run_evaluation():
                 try:
@@ -438,15 +455,15 @@ async def fixed_threshold_evaluation(request: FixedThresholdRequest):
                         request.max_false_positives_per_query,
                         progress_callback,
                     )
-                    result_container['result'] = result
+                    result_container["result"] = result
                 except Exception as e:
-                    result_container['error'] = e
-                    progress_queue.put({'type': 'error', 'message': str(e)})
-            
+                    result_container["error"] = e
+                    progress_queue.put({"type": "error", "message": str(e)})
+
             # Start evaluation in a thread
             eval_thread = threading.Thread(target=run_evaluation)
             eval_thread.start()
-            
+
             # Stream progress messages while evaluation runs
             while eval_thread.is_alive():
                 try:
@@ -457,25 +474,28 @@ async def fixed_threshold_evaluation(request: FixedThresholdRequest):
                 except queue.Empty:
                     # No messages, wait a bit and check if thread is still running
                     await asyncio.sleep(0.1)
-            
+
             # Thread finished, get any remaining messages
             while not progress_queue.empty():
                 msg = progress_queue.get()
                 yield f"data: {json.dumps(msg)}\n\n"
-            
+
             # Check for error or send results
-            if result_container['error']:
-                raise result_container['error']
-            
-            if result_container['result']:
+            if result_container["error"]:
+                raise result_container["error"]
+
+            if result_container["result"]:
                 yield f"data: {json.dumps({'type': 'complete', 'results': result_container['result']})}\n\n"
-        
+
         return StreamingResponse(stream_response(), media_type="text/event-stream")
-        
+
     except Exception as e:
         import traceback
+
         error_detail = traceback.format_exc()
-        raise HTTPException(status_code=500, detail=f"Evaluation failed: {str(e)}\n{error_detail}")
+        raise HTTPException(
+            status_code=500, detail=f"Evaluation failed: {str(e)}\n{error_detail}"
+        )
 
 
 if __name__ == "__main__":
