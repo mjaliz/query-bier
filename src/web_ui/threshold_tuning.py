@@ -796,10 +796,21 @@ def evaluate_fixed_threshold_with_details(
                 })
                 overall_metrics["false_negatives"] += 1
             elif not is_relevant and is_above_threshold:
+                # Find which query this document actually belongs to (if any)
+                actual_relevant_queries = []
+                for other_query_id, other_relevant_docs in qrels.items():
+                    if doc_id in other_relevant_docs:
+                        actual_relevant_queries.append({
+                            "query_id": other_query_id,
+                            "query_text": queries.get(other_query_id, "Unknown query"),
+                            "relevance": other_relevant_docs[doc_id]
+                        })
+                
                 false_positives.append({
                     "doc_id": doc_id,
                     "score": sim_score,
-                    "text": corpus[doc_id][:150]
+                    "text": corpus[doc_id][:150],
+                    "actual_relevant_queries": actual_relevant_queries  # This shows what queries this doc SHOULD match
                 })
                 overall_metrics["false_positives"] += 1
             else:

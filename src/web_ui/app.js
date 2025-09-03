@@ -1519,18 +1519,40 @@ function showQueryDetails(queryIndex) {
             </div>
             <div class="card-body p-3">
                 <div class="mb-2">
-                    <strong class="text-danger">Related Query:</strong>
-                    <div class="border rounded p-2 bg-light mt-1">
+                    <strong class="text-danger">Incorrectly Matched Query:</strong>
+                    <div class="border rounded p-2 bg-danger bg-opacity-10 mt-1">
                         <div class="d-flex justify-content-between align-items-start">
-                            <small class="text-primary"><strong>ID:</strong> ${query.query_id}</small>
-                            <small class="text-muted">Query for this false positive</small>
+                            <small class="text-danger"><strong>ID:</strong> ${query.query_id}</small>
+                            <small class="text-muted">Query that incorrectly matched</small>
                         </div>
                         <div class="mt-1 small">${query.query_text}</div>
                     </div>
                 </div>
+                
+                ${doc.actual_relevant_queries && doc.actual_relevant_queries.length > 0 ? `
                 <div class="mb-2">
-                    <strong class="text-danger">False Positive Document:</strong>
-                    <p class="mb-1 small border rounded p-2">${doc.text}...</p>
+                    <strong class="text-success">Actually Relevant To:</strong>
+                    ${doc.actual_relevant_queries.map(relevantQuery => `
+                        <div class="border rounded p-2 bg-success bg-opacity-10 mt-1">
+                            <div class="d-flex justify-content-between align-items-start">
+                                <small class="text-success"><strong>ID:</strong> ${relevantQuery.query_id}</small>
+                                <small class="badge bg-success">Relevance: ${relevantQuery.relevance}</small>
+                            </div>
+                            <div class="mt-1 small">${relevantQuery.query_text}</div>
+                        </div>
+                    `).join('')}
+                </div>
+                ` : `
+                <div class="mb-2">
+                    <div class="alert alert-warning py-2">
+                        <small><i class="bi bi-info-circle"></i> This document is not relevant to any query in the dataset.</small>
+                    </div>
+                </div>
+                `}
+                
+                <div class="mb-2">
+                    <strong class="text-secondary">Document Content:</strong>
+                    <p class="mb-1 small border rounded p-2 bg-light">${doc.text}...</p>
                 </div>
                 <div class="d-flex justify-content-between align-items-center">
                     <small class="text-muted">Doc ID: ${doc.doc_id}</small>
@@ -1541,7 +1563,7 @@ function showQueryDetails(queryIndex) {
                 <div class="mt-2">
                     <small class="text-danger">
                         <i class="bi bi-exclamation-triangle"></i> 
-                        This document scored ${doc.score.toFixed(3)} for the query above, but it's not actually relevant.
+                        This document scored ${doc.score.toFixed(3)} for "${query.query_id}" but ${doc.actual_relevant_queries && doc.actual_relevant_queries.length > 0 ? 'belongs to other queries above' : 'is not relevant to any query'}.
                     </small>
                 </div>
             </div>
@@ -1666,11 +1688,28 @@ function filterFalsePositives() {
             <td><span class="badge bg-danger">${fp.score.toFixed(3)}</span></td>
             <td>
                 <div class="mb-1">
-                    <strong class="text-primary">${fp.query_id}</strong>
+                    <span class="badge bg-danger bg-opacity-25">Incorrect Match</span>
+                </div>
+                <div class="mb-1">
+                    <strong class="text-danger">${fp.query_id}</strong>
                 </div>
                 <div class="small text-muted" title="${fp.query_text}">
-                    ${fp.query_text.substring(0, 50)}${fp.query_text.length > 50 ? '...' : ''}
+                    ${fp.query_text.substring(0, 40)}${fp.query_text.length > 40 ? '...' : ''}
                 </div>
+                ${fp.actual_relevant_queries && fp.actual_relevant_queries.length > 0 ? `
+                <div class="mt-2">
+                    <span class="badge bg-success bg-opacity-25">Should Match</span>
+                    ${fp.actual_relevant_queries.map(relevantQuery => `
+                        <div class="small text-success">
+                            <strong>${relevantQuery.query_id}</strong>
+                        </div>
+                    `).join('')}
+                </div>
+                ` : `
+                <div class="mt-2">
+                    <small class="text-muted"><i class="bi bi-info-circle"></i> Not relevant to any query</small>
+                </div>
+                `}
             </td>
             <td>
                 <code class="small">${fp.doc_id}</code>
@@ -1680,9 +1719,11 @@ function filterFalsePositives() {
                     ${fp.text.substring(0, 60)}${fp.text.length > 60 ? '...' : ''}
                 </div>
                 <div class="mt-1">
-                    <small class="text-danger">
-                        <i class="bi bi-exclamation-triangle"></i> 
-                        Incorrectly matched with query "${fp.query_id}"
+                    <small class="text-info">
+                        <i class="bi bi-arrow-right"></i>
+                        ${fp.actual_relevant_queries && fp.actual_relevant_queries.length > 0 
+                          ? `Should match: ${fp.actual_relevant_queries.map(q => q.query_id).join(', ')}` 
+                          : 'Not relevant to any query'}
                     </small>
                 </div>
             </td>
