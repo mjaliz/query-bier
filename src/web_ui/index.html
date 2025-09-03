@@ -572,6 +572,57 @@
                                                         </table>
                                                     </div>
                                                 </div>
+                                                
+                                                <!-- False Positives Explorer -->
+                                                <div class="mb-3">
+                                                    <div class="d-flex justify-content-between align-items-center mb-2">
+                                                        <h6 class="text-danger mb-0">
+                                                            <i class="bi bi-exclamation-triangle"></i> False Positives Explorer
+                                                        </h6>
+                                                        <button class="btn btn-outline-danger btn-sm" id="toggleFalsePositives" 
+                                                                onclick="toggleFalsePositivesExplorer()" style="display: none;">
+                                                            <i class="bi bi-eye"></i> Show All False Positives
+                                                        </button>
+                                                    </div>
+                                                    <div id="falsePositivesExplorer" style="display: none;">
+                                                        <div class="row mb-3">
+                                                            <div class="col-md-6">
+                                                                <input type="text" class="form-control form-control-sm" id="fpSearchBox" 
+                                                                       placeholder="Search false positives by text or document ID...">
+                                                            </div>
+                                                            <div class="col-md-3">
+                                                                <select class="form-select form-select-sm" id="fpScoreFilter">
+                                                                    <option value="all">All Scores</option>
+                                                                    <option value="high">High Score (≥0.7)</option>
+                                                                    <option value="medium">Medium Score (0.5-0.7)</option>
+                                                                    <option value="low">Low Score (<0.5)</option>
+                                                                </select>
+                                                            </div>
+                                                            <div class="col-md-3">
+                                                                <select class="form-select form-select-sm" id="fpQueryFilter">
+                                                                    <option value="all">All Queries</option>
+                                                                </select>
+                                                            </div>
+                                                        </div>
+                                                        <div class="table-responsive" style="max-height: 500px; overflow-y: auto;">
+                                                            <table class="table table-sm table-hover" id="falsePositivesTable">
+                                                                <thead class="table-danger">
+                                                                    <tr>
+                                                                        <th>Score</th>
+                                                                        <th>Query</th>
+                                                                        <th>Document ID</th>
+                                                                        <th>Document Text</th>
+                                                                        <th>Actions</th>
+                                                                    </tr>
+                                                                </thead>
+                                                                <tbody id="falsePositivesTableBody">
+                                                                </tbody>
+                                                            </table>
+                                                        </div>
+                                                        <div id="fpStats" class="mt-3 text-muted small">
+                                                        </div>
+                                                    </div>
+                                                </div>
                                             </div>
                                         </div>
                                     </div>
@@ -583,31 +634,124 @@
                                 <div class="modal-dialog modal-xl">
                                     <div class="modal-content">
                                         <div class="modal-header">
-                                            <h5 class="modal-title">Query Details</h5>
+                                            <h5 class="modal-title">Query Analysis Details</h5>
                                             <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
                                         </div>
                                         <div class="modal-body">
-                                            <div class="row">
-                                                <div class="col-md-12">
+                                            <!-- Query information -->
+                                            <div class="row mb-4">
+                                                <div class="col-md-8">
                                                     <h6>Query Text:</h6>
-                                                    <p id="modalQueryText" class="border rounded p-2 bg-light"></p>
+                                                    <p id="modalQueryText" class="border rounded p-3 bg-light mb-2"></p>
+                                                </div>
+                                                <div class="col-md-4">
+                                                    <div class="card bg-info text-white">
+                                                        <div class="card-body text-center p-2">
+                                                            <div class="row">
+                                                                <div class="col-4">
+                                                                    <small>Precision</small>
+                                                                    <br><strong id="modalPrecision">-</strong>
+                                                                </div>
+                                                                <div class="col-4">
+                                                                    <small>Recall</small>
+                                                                    <br><strong id="modalRecall">-</strong>
+                                                                </div>
+                                                                <div class="col-4">
+                                                                    <small>F1 Score</small>
+                                                                    <br><strong id="modalF1">-</strong>
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             </div>
                                             
+                                            <!-- Tabs for different document types -->
+                                            <ul class="nav nav-tabs mb-3" id="modalTabs">
+                                                <li class="nav-item">
+                                                    <button class="nav-link active" id="tp-tab" data-bs-toggle="tab" data-bs-target="#tp-content">
+                                                        <i class="bi bi-check-circle text-success"></i> True Positives (<span id="tpCount">0</span>)
+                                                    </button>
+                                                </li>
+                                                <li class="nav-item">
+                                                    <button class="nav-link" id="fp-tab" data-bs-toggle="tab" data-bs-target="#fp-content">
+                                                        <i class="bi bi-x-circle text-danger"></i> False Positives (<span id="fpCount">0</span>)
+                                                    </button>
+                                                </li>
+                                                <li class="nav-item">
+                                                    <button class="nav-link" id="fn-tab" data-bs-toggle="tab" data-bs-target="#fn-content">
+                                                        <i class="bi bi-dash-circle text-warning"></i> False Negatives (<span id="fnCount">0</span>)
+                                                    </button>
+                                                </li>
+                                            </ul>
+                                            
+                                            <div class="tab-content">
+                                                <!-- True Positives Tab -->
+                                                <div class="tab-pane fade show active" id="tp-content">
+                                                    <div class="alert alert-success">
+                                                        <i class="bi bi-info-circle"></i> These documents were correctly identified as relevant and scored above the threshold.
+                                                    </div>
+                                                    <div id="modalTruePositives" style="max-height: 400px; overflow-y: auto;">
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- False Positives Tab -->
+                                                <div class="tab-pane fade" id="fp-content">
+                                                    <div class="alert alert-danger">
+                                                        <i class="bi bi-exclamation-triangle"></i> These documents scored above the threshold but are NOT actually relevant to this query. 
+                                                        <strong>This is what you want to analyze!</strong>
+                                                    </div>
+                                                    <div class="mb-2">
+                                                        <input type="text" class="form-control form-control-sm" id="modalFpSearch" 
+                                                               placeholder="Search false positives...">
+                                                    </div>
+                                                    <div id="modalFalsePositives" style="max-height: 400px; overflow-y: auto;">
+                                                    </div>
+                                                </div>
+                                                
+                                                <!-- False Negatives Tab -->
+                                                <div class="tab-pane fade" id="fn-content">
+                                                    <div class="alert alert-warning">
+                                                        <i class="bi bi-info-circle"></i> These documents are actually relevant but scored below the threshold (missed matches).
+                                                    </div>
+                                                    <div id="modalFalseNegatives" style="max-height: 400px; overflow-y: auto;">
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                            
+                            <!-- Modal for individual document details -->
+                            <div class="modal fade" id="documentDetailModal" tabindex="-1">
+                                <div class="modal-dialog modal-lg">
+                                    <div class="modal-content">
+                                        <div class="modal-header">
+                                            <h5 class="modal-title">Document Details</h5>
+                                            <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+                                        </div>
+                                        <div class="modal-body">
+                                            <div class="row mb-3">
+                                                <div class="col-md-6">
+                                                    <strong>Document ID:</strong>
+                                                    <code id="docDetailId">-</code>
+                                                </div>
+                                                <div class="col-md-6">
+                                                    <strong>Similarity Score:</strong>
+                                                    <span class="badge bg-primary" id="docDetailScore">-</span>
+                                                </div>
+                                            </div>
+                                            <div class="row mb-3">
+                                                <div class="col-12">
+                                                    <strong>Query:</strong>
+                                                    <p id="docDetailQuery" class="border rounded p-2 bg-light small">-</p>
+                                                </div>
+                                            </div>
                                             <div class="row">
-                                                <div class="col-md-4">
-                                                    <h6 class="text-success">True Positives (Correct Matches)</h6>
-                                                    <div id="modalTruePositives" style="max-height: 300px; overflow-y: auto;">
-                                                    </div>
-                                                </div>
-                                                <div class="col-md-4">
-                                                    <h6 class="text-danger">False Positives (Incorrect Matches)</h6>
-                                                    <div id="modalFalsePositives" style="max-height: 300px; overflow-y: auto;">
-                                                    </div>
-                                                </div>
-                                                <div class="col-md-4">
-                                                    <h6 class="text-warning">False Negatives (Missed Matches)</h6>
-                                                    <div id="modalFalseNegatives" style="max-height: 300px; overflow-y: auto;">
+                                                <div class="col-12">
+                                                    <strong>Full Document Text:</strong>
+                                                    <div id="docDetailText" class="border rounded p-3 bg-light" style="max-height: 300px; overflow-y: auto; white-space: pre-wrap;">
                                                     </div>
                                                 </div>
                                             </div>

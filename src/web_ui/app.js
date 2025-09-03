@@ -1385,6 +1385,9 @@ function displayFixedThresholdResults(results) {
     
     // Store results globally for modal access
     window.fixedThresholdResults = results;
+    
+    // Setup false positives explorer
+    setupFalsePositivesExplorer(results);
 }
 
 function showQueryDetails(queryIndex) {
@@ -1394,53 +1397,213 @@ function showQueryDetails(queryIndex) {
     
     // Update modal content
     document.getElementById('modalQueryText').textContent = query.query_text;
+    document.getElementById('modalPrecision').textContent = query.metrics.precision.toFixed(3);
+    document.getElementById('modalRecall').textContent = query.metrics.recall.toFixed(3);
+    document.getElementById('modalF1').textContent = query.metrics.f1.toFixed(3);
+    
+    // Update counts in tabs
+    document.getElementById('tpCount').textContent = query.true_positives.length;
+    document.getElementById('fpCount').textContent = query.false_positives.length;
+    document.getElementById('fnCount').textContent = query.false_negatives.length;
     
     // True Positives
     const tpContainer = document.getElementById('modalTruePositives');
-    tpContainer.innerHTML = query.true_positives.map(doc => `
-        <div class="card mb-2">
-            <div class="card-body p-2">
-                <div class="d-flex justify-content-between align-items-start mb-1">
-                    <small class="text-muted">Score: ${doc.score.toFixed(3)}</small>
-                    <span class="badge bg-success">Relevance: ${doc.relevance}</span>
+    tpContainer.innerHTML = query.true_positives.map((doc, index) => `
+        <div class="card mb-2 border-success">
+            <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-success">Score: ${doc.score.toFixed(3)}</span>
+                    <span class="badge bg-outline-success">Relevance: ${doc.relevance}</span>
                 </div>
-                <p class="mb-0 small">${doc.text}...</p>
-                <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+                <p class="mb-2 small">${doc.text}...</p>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+                    <button class="btn btn-sm btn-outline-info" onclick="showDocumentDetails('${doc.doc_id}', ${doc.score}, '${query.query_text}', 'tp', ${queryIndex}, ${index})">
+                        <i class="bi bi-zoom-in"></i> Full Text
+                    </button>
+                </div>
             </div>
         </div>
     `).join('');
     
     // False Positives
     const fpContainer = document.getElementById('modalFalsePositives');
-    fpContainer.innerHTML = query.false_positives.map(doc => `
-        <div class="card mb-2">
-            <div class="card-body p-2">
-                <div class="d-flex justify-content-between align-items-start mb-1">
-                    <small class="text-muted">Score: ${doc.score.toFixed(3)}</small>
+    fpContainer.innerHTML = query.false_positives.map((doc, index) => `
+        <div class="card mb-2 border-danger">
+            <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-danger">Score: ${doc.score.toFixed(3)}</span>
                     <span class="badge bg-danger">False Match</span>
                 </div>
-                <p class="mb-0 small">${doc.text}...</p>
-                <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+                <p class="mb-2 small">${doc.text}...</p>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+                    <button class="btn btn-sm btn-outline-info" onclick="showDocumentDetails('${doc.doc_id}', ${doc.score}, '${query.query_text}', 'fp', ${queryIndex}, ${index})">
+                        <i class="bi bi-zoom-in"></i> Full Text
+                    </button>
+                </div>
             </div>
         </div>
     `).join('');
     
     // False Negatives
     const fnContainer = document.getElementById('modalFalseNegatives');
-    fnContainer.innerHTML = query.false_negatives.map(doc => `
-        <div class="card mb-2">
-            <div class="card-body p-2">
-                <div class="d-flex justify-content-between align-items-start mb-1">
-                    <small class="text-muted">Score: ${doc.score.toFixed(3)}</small>
-                    <span class="badge bg-warning">Relevance: ${doc.relevance}</span>
+    fnContainer.innerHTML = query.false_negatives.map((doc, index) => `
+        <div class="card mb-2 border-warning">
+            <div class="card-body p-3">
+                <div class="d-flex justify-content-between align-items-start mb-2">
+                    <span class="badge bg-warning">Score: ${doc.score.toFixed(3)}</span>
+                    <span class="badge bg-outline-warning">Relevance: ${doc.relevance}</span>
                 </div>
-                <p class="mb-0 small">${doc.text}...</p>
-                <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+                <p class="mb-2 small">${doc.text}...</p>
+                <div class="d-flex justify-content-between align-items-center">
+                    <small class="text-muted">Doc ID: ${doc.doc_id}</small>
+                    <button class="btn btn-sm btn-outline-info" onclick="showDocumentDetails('${doc.doc_id}', ${doc.score}, '${query.query_text}', 'fn', ${queryIndex}, ${index})">
+                        <i class="bi bi-zoom-in"></i> Full Text
+                    </button>
+                </div>
             </div>
         </div>
     `).join('');
     
     // Show modal
     const modal = new bootstrap.Modal(document.getElementById('queryDetailModal'));
+    modal.show();
+}
+
+function setupFalsePositivesExplorer(results) {
+    // Collect all false positives across queries
+    let allFalsePositives = [];
+    results.query_details.forEach((query, queryIndex) => {
+        query.false_positives.forEach(fp => {
+            allFalsePositives.push({
+                ...fp,
+                query_id: query.query_id,
+                query_text: query.query_text,
+                query_index: queryIndex
+            });
+        });
+    });
+    
+    // Show toggle button if we have false positives
+    if (allFalsePositives.length > 0) {
+        document.getElementById('toggleFalsePositives').style.display = 'block';
+        document.getElementById('toggleFalsePositives').innerHTML = `
+            <i class="bi bi-eye"></i> Show All False Positives (${allFalsePositives.length})
+        `;
+    }
+    
+    // Store for filtering
+    window.allFalsePositives = allFalsePositives;
+    
+    // Setup query filter dropdown
+    const queryFilter = document.getElementById('fpQueryFilter');
+    const uniqueQueries = [...new Set(allFalsePositives.map(fp => fp.query_id))];
+    queryFilter.innerHTML = '<option value="all">All Queries</option>' + 
+        uniqueQueries.map(qid => `<option value="${qid}">${qid}</option>`).join('');
+    
+    // Setup event listeners
+    document.getElementById('fpSearchBox').addEventListener('input', filterFalsePositives);
+    document.getElementById('fpScoreFilter').addEventListener('change', filterFalsePositives);
+    document.getElementById('fpQueryFilter').addEventListener('change', filterFalsePositives);
+}
+
+function toggleFalsePositivesExplorer() {
+    const explorer = document.getElementById('falsePositivesExplorer');
+    const button = document.getElementById('toggleFalsePositives');
+    
+    if (explorer.style.display === 'none') {
+        explorer.style.display = 'block';
+        button.innerHTML = '<i class="bi bi-eye-slash"></i> Hide False Positives';
+        // Load initial data
+        filterFalsePositives();
+    } else {
+        explorer.style.display = 'none';
+        button.innerHTML = `<i class="bi bi-eye"></i> Show All False Positives (${window.allFalsePositives.length})`;
+    }
+}
+
+function filterFalsePositives() {
+    if (!window.allFalsePositives) return;
+    
+    const searchText = document.getElementById('fpSearchBox').value.toLowerCase();
+    const scoreFilter = document.getElementById('fpScoreFilter').value;
+    const queryFilter = document.getElementById('fpQueryFilter').value;
+    
+    let filtered = window.allFalsePositives.filter(fp => {
+        // Text search
+        const matchesSearch = !searchText || 
+            fp.text.toLowerCase().includes(searchText) ||
+            fp.doc_id.toLowerCase().includes(searchText) ||
+            fp.query_text.toLowerCase().includes(searchText);
+        
+        // Score filter
+        const matchesScore = scoreFilter === 'all' ||
+            (scoreFilter === 'high' && fp.score >= 0.7) ||
+            (scoreFilter === 'medium' && fp.score >= 0.5 && fp.score < 0.7) ||
+            (scoreFilter === 'low' && fp.score < 0.5);
+        
+        // Query filter
+        const matchesQuery = queryFilter === 'all' || fp.query_id === queryFilter;
+        
+        return matchesSearch && matchesScore && matchesQuery;
+    });
+    
+    // Sort by score (highest first)
+    filtered.sort((a, b) => b.score - a.score);
+    
+    // Update table
+    const tbody = document.getElementById('falsePositivesTableBody');
+    tbody.innerHTML = filtered.map(fp => `
+        <tr>
+            <td><span class="badge bg-danger">${fp.score.toFixed(3)}</span></td>
+            <td title="${fp.query_text}"><small>${fp.query_id}</small></td>
+            <td><code>${fp.doc_id}</code></td>
+            <td title="${fp.text}">${fp.text.substring(0, 80)}${fp.text.length > 80 ? '...' : ''}</td>
+            <td>
+                <button class="btn btn-sm btn-outline-info" onclick="showDocumentDetails('${fp.doc_id}', ${fp.score}, '${fp.query_text}', 'fp')">
+                    <i class="bi bi-zoom-in"></i> View
+                </button>
+            </td>
+        </tr>
+    `).join('');
+    
+    // Update stats
+    document.getElementById('fpStats').innerHTML = `
+        Showing ${filtered.length} of ${window.allFalsePositives.length} false positives
+        ${searchText ? ` | Search: "${searchText}"` : ''}
+        ${scoreFilter !== 'all' ? ` | Score: ${scoreFilter}` : ''}
+        ${queryFilter !== 'all' ? ` | Query: ${queryFilter}` : ''}
+    `;
+}
+
+function showDocumentDetails(docId, score, queryText, type, queryIndex, docIndex) {
+    // Update document modal
+    document.getElementById('docDetailId').textContent = docId;
+    document.getElementById('docDetailScore').textContent = score.toFixed(3);
+    document.getElementById('docDetailQuery').textContent = queryText;
+    
+    // Get full document text from results
+    let fullText = 'Document text not available';
+    if (window.fixedThresholdResults && queryIndex !== undefined && docIndex !== undefined) {
+        const query = window.fixedThresholdResults.query_details[queryIndex];
+        let doc;
+        if (type === 'tp') doc = query.true_positives[docIndex];
+        else if (type === 'fp') doc = query.false_positives[docIndex];
+        else if (type === 'fn') doc = query.false_negatives[docIndex];
+        
+        if (doc) {
+            fullText = doc.text;
+        }
+    }
+    
+    document.getElementById('docDetailText').textContent = fullText;
+    
+    // Set badge color based on type
+    const badge = document.getElementById('docDetailScore');
+    badge.className = `badge ${type === 'tp' ? 'bg-success' : type === 'fp' ? 'bg-danger' : 'bg-warning'}`;
+    
+    // Show document modal
+    const modal = new bootstrap.Modal(document.getElementById('documentDetailModal'));
     modal.show();
 }
