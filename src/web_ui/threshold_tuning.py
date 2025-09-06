@@ -138,13 +138,22 @@ def calculate_metrics_at_threshold(
         total_false_negatives += query_fn
         total_true_negatives += query_tn
 
-    # Calculate averaged metrics across all queries
-    if query_metrics:
-        avg_precision = float(np.mean([m["precision"] for m in query_metrics]))
-        avg_recall = float(np.mean([m["recall"] for m in query_metrics]))
-        avg_f1 = float(np.mean([m["f1"] for m in query_metrics]))
+    # Calculate overall metrics using micro-averaging (based on total counts)
+    # This is more appropriate for threshold-based evaluation
+    if total_true_positives + total_false_positives > 0:
+        overall_precision = total_true_positives / (total_true_positives + total_false_positives)
     else:
-        avg_precision = avg_recall = avg_f1 = 0.0
+        overall_precision = 0.0
+    
+    if total_true_positives + total_false_negatives > 0:
+        overall_recall = total_true_positives / (total_true_positives + total_false_negatives)
+    else:
+        overall_recall = 0.0
+    
+    if overall_precision + overall_recall > 0:
+        overall_f1 = 2 * (overall_precision * overall_recall) / (overall_precision + overall_recall)
+    else:
+        overall_f1 = 0.0
     
     # Calculate overall accuracy
     total = total_true_positives + total_false_positives + total_false_negatives + total_true_negatives
@@ -152,9 +161,9 @@ def calculate_metrics_at_threshold(
 
     return {
         "threshold": threshold,
-        "precision": avg_precision,
-        "recall": avg_recall,
-        "f1": avg_f1,
+        "precision": overall_precision,
+        "recall": overall_recall,
+        "f1": overall_f1,
         "accuracy": accuracy,
         "true_positives": total_true_positives,
         "false_positives": total_false_positives,
@@ -874,13 +883,8 @@ def evaluate_fixed_threshold_with_details(
         else 0
     )
     
-    # Calculate average metrics
-    if query_details:
-        avg_precision = np.mean([q["metrics"]["precision"] for q in query_details])
-        avg_recall = np.mean([q["metrics"]["recall"] for q in query_details])
-        avg_f1 = np.mean([q["metrics"]["f1"] for q in query_details])
-    else:
-        avg_precision = avg_recall = avg_f1 = 0
+    # Note: Previously calculated average metrics here, but micro-averaging (overall_*) 
+    # is more appropriate for threshold-based evaluation
     
     encoding_time = time.time() - start_time
     
@@ -896,9 +900,9 @@ def evaluate_fixed_threshold_with_details(
         "model_name": model_name,
         "threshold": threshold,
         "overall_metrics": {
-            "precision": float(avg_precision),
-            "recall": float(avg_recall),
-            "f1": float(avg_f1),
+            "precision": float(overall_precision),
+            "recall": float(overall_recall),
+            "f1": float(overall_f1),
             "accuracy": float(
                 (overall_metrics["true_positives"] + overall_metrics["true_negatives"]) /
                 sum(overall_metrics.values()) if sum(overall_metrics.values()) > 0 else 0
