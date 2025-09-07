@@ -12,3 +12,5 @@ wheels/
 *.json
 data
 .DS_Store
+postgres_data/
+.env
