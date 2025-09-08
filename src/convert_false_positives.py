@@ -70,7 +70,7 @@ def convert_to_query_format(grouped_records: Dict[str, List[Dict]]) -> List[Quer
                 corpus_query_text=record["doc_q_text"],
                 qrel_score=record["qrel_score"],
             )
-            corpuses.append(corpus)
+            corpuses.append(corpus.model_dump())
 
         # Create Query object
         query = Query(query_id=query_id, query_text=query_text, corpuses=corpuses)

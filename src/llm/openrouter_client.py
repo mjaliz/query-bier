@@ -20,13 +20,15 @@ class OpenrouterClient:
         self.limiter = limiter
         self.key = api_key
 
-    async def generate_text(self, prompt: str) -> QueryBier | None:
+    async def generate_text(
+        self, prompt: str, response_format: type[BaseModel] = QueryBier
+    ) -> BaseModel | None:
         await self.limiter.acquire()
         try:
             response = await self.client.beta.chat.completions.parse(
                 model="google/gemini-2.5-flash",
                 messages=[{"role": "user", "content": prompt}],
-                response_format=QueryBier,
+                response_format=response_format,
             )
 
             return response.choices[0].message.parsed

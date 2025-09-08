@@ -16,8 +16,21 @@ class PostgresConfig(BaseSettings):
     )
 
 
+class ApiConfig(BaseSettings):
+    OPENROUTER_API_KEY: str = ""
+    GEMINI_API_KEYS: list[str] = []
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        env_prefix="API_",
+        env_file_encoding="utf-8",
+    )
+
+
 class AppConfig(BaseSettings):
-    postgres_config: PostgresConfig
+    postgres_config: PostgresConfig = PostgresConfig()
+    api_config: ApiConfig = ApiConfig()
 
 
-app_config = AppConfig()
+app_config = AppConfig(postgres_config=PostgresConfig())

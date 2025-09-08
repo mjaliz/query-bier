@@ -10,8 +10,15 @@ class Corpus(SQLModel):
     qrel_score: int
 
 
+class BeirScore(SQLModel):
+    corpus_id: str
+    corpus_text: str
+    score: int
+
+
 class Query(SQLModel, table=True):
     id: int = Field(default=None, primary_key=True)
     query_id: str = Field(index=True)
     query_text: str
     corpuses: list[Corpus] = Field(default_factory=list, sa_type=JSONB)
+    results: list[BeirScore] | None = Field(default=None, sa_type=JSONB)
